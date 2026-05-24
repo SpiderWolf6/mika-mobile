@@ -41,13 +41,13 @@ export function HomeScreen() {
       // Init TTS
       try {
         await Tts.getInitStatus();
+        Tts.setDucking(true);
         Tts.addEventListener('tts-finish', () => setStage('idle'));
         Tts.addEventListener('tts-cancel', () => setStage('idle'));
       } catch (e: any) {
         if (e?.code === 'no_engine') {
           await Tts.requestInstallEngine();
         }
-        // Non-fatal — app works without TTS
         console.warn('TTS init failed:', e);
       }
 

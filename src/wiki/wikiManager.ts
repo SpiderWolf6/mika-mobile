@@ -58,6 +58,8 @@ export async function getRelevantWikiContext(query: string): Promise<string[]> {
 
   // Simple relevance: sort by recency, take top N
   // TODO: replace with keyword/embedding search
-  const sorted = files.sort((a, b) => b.lastModified - a.lastModified);
+  const PLACEHOLDER = '<!-- MIKA will fill this in -->';
+  const meaningful = files.filter(f => !f.content.includes(PLACEHOLDER) && f.content.trim().length > 30);
+  const sorted = meaningful.sort((a, b) => b.lastModified - a.lastModified);
   return sorted.slice(0, MAX_WIKI_CONTEXT_FILES).map(f => `### ${f.name}\n${f.content}`);
 }
