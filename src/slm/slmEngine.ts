@@ -118,11 +118,18 @@ ${transcription}
 <|assistant|>`;
 
   const result = await llamaCtx!.completion(
-    {prompt, stop: ['<|end|>', '<|user|>'], temperature: 0.7, n_predict: 150},
+    {prompt, stop: ['<|end|>', '<|user|>', '<|system|>', 'User knowledge:', 'Action completed:'], temperature: 0.7, n_predict: 150},
     () => {},
   );
 
-  return result.text.trim();
+  // Hard-truncate anything that looks like prompt leakage
+  let text = result.text.trim();
+  const leakMarkers = ['<|', 'User knowledge:', 'Action completed:', '<|system|>', '<|user|>'];
+  for (const marker of leakMarkers) {
+    const idx = text.indexOf(marker);
+    if (idx > 0) { text = text.slice(0, idx).trim(); }
+  }
+  return text;
 }
 
 export async function extractWikiFacts(

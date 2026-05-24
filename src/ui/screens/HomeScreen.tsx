@@ -6,6 +6,7 @@ import {
   Text,
   Alert,
   Platform,
+  NativeModules,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import Tts from 'react-native-tts';
@@ -155,9 +156,14 @@ export function HomeScreen() {
       const response = await generateResponse(transcription, connectorSummary, slmContext);
 
       // Step 4 — speak response
+      // On iOS, deactivate the record audio session so TTS can take over
       setStage('speaking');
       try {
-        await Tts.speak(response);
+        if (Platform.OS === 'ios' && NativeModules.RNAudioRecord) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        Tts.stop();
+        Tts.speak(response);
       } catch (e) {
         console.warn('TTS speak failed:', e);
         setStage('idle');

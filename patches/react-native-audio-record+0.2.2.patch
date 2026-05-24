@@ -1,0 +1,12 @@
+diff --git a/node_modules/react-native-audio-record/ios/RNAudioRecord.m b/node_modules/react-native-audio-record/ios/RNAudioRecord.m
+index 1234567..abcdefg 100644
+--- a/node_modules/react-native-audio-record/ios/RNAudioRecord.m
++++ b/node_modules/react-native-audio-record/ios/RNAudioRecord.m
+@@ -53,6 +53,10 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
+         AudioQueueDispose(_recordState.mQueue, true);
+         AudioFileClose(_recordState.mAudioFile);
++        [[AVAudioSession sharedInstance] setActive:NO
++            withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
++            error:nil];
+     }
+     resolve(_filePath);
