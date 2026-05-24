@@ -14,7 +14,6 @@ if linkage != nil
   use_frameworks! :linkage => linkage.to_sym
 end
 
-$RNPermissionsModules = ['Microphone']
 target 'MikaMobile' do
   config = use_native_modules!
 
@@ -24,8 +23,7 @@ target 'MikaMobile' do
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
 
-  permissions_path = '../node_modules/react-native-permissions/ios'
-  setup_permissions(['Microphone'])
+  pod 'Permission-Microphone', :path => "../node_modules/react-native-permissions/ios/Microphone"
 
   post_install do |installer|
     react_native_post_install(
