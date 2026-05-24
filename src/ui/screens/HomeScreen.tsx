@@ -10,7 +10,6 @@ import {
 import AudioRecord from 'react-native-audio-record';
 import RNFS from 'react-native-fs';
 import Tts from 'react-native-tts';
-import {check, request, PERMISSIONS, RESULTS} from 'react-native-permissions';
 
 import {RecordButton} from '../components/RecordButton';
 import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
@@ -52,26 +51,31 @@ export function HomeScreen() {
       // Init alarm foreground listeners
       initAlarmListeners();
 
-      // Check / request mic permission, then init recorder once
-      const permission =
-        Platform.OS === 'android'
-          ? PERMISSIONS.ANDROID.RECORD_AUDIO
-          : PERMISSIONS.IOS.MICROPHONE;
-
-      let status = await check(permission);
-      if (status === RESULTS.DENIED) {
-        status = await request(permission);
+      // On Android, explicitly request mic permission
+      // On iOS, the system dialog fires automatically on first AudioRecord.init()
+      if (Platform.OS === 'android') {
+        const {PermissionsAndroid} = require('react-native');
+        const result = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: 'Microphone Access',
+            message: 'MIKA needs microphone access to hear your voice commands.',
+            buttonPositive: 'Allow',
+            buttonNegative: 'Deny',
+          },
+        );
+        micPermissionRef.current = result === PermissionsAndroid.RESULTS.GRANTED;
+      } else {
+        micPermissionRef.current = true;
       }
-      micPermissionRef.current = status === RESULTS.GRANTED;
 
-      if (micPermissionRef.current) {
-        AudioRecord.init({
-          sampleRate: 16000,
-          channels: 1,
-          bitsPerSample: 16,
-          wavFile: 'mika_recording.wav',
-        });
-      }
+      // Init recorder once — on iOS this triggers the mic permission dialog
+      AudioRecord.init({
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        wavFile: 'mika_recording.wav',
+      });
     })();
 
     return () => {
