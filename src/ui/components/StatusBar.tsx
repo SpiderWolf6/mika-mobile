@@ -17,16 +17,19 @@ const INTENT_LABELS: Record<IntentType, string> = {
   unknown: 'Unknown',
 };
 
+const ACTIONABLE_INTENTS: IntentType[] = ['calendar', 'reminder', 'alarm', 'search', 'gmail', 'discord'];
+
 export function MikaStatusBar({intent, connectorStatus}: MikaStatusBarProps) {
-  if (!intent && !connectorStatus) {
+  const showPill = intent && ACTIONABLE_INTENTS.includes(intent);
+  if (!showPill && !connectorStatus) {
     return null;
   }
 
   return (
     <View style={styles.container}>
-      {intent && (
+      {showPill && (
         <View style={styles.pill}>
-          <Text style={styles.pillText}>{INTENT_LABELS[intent]}</Text>
+          <Text style={styles.pillText}>{INTENT_LABELS[intent!]}</Text>
         </View>
       )}
       {connectorStatus && (

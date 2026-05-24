@@ -102,17 +102,18 @@ export async function generateResponse(
 
   const wikiBlock = context.wikiSnippets.join('\n\n');
 
+  const actionContext = intentResult !== 'No action taken'
+    ? `Action completed: ${intentResult}.`
+    : '';
+
   const prompt = `<|system|>
-You are MIKA, a concise friendly personal assistant.
-You can ONLY help with: calendar events, reminders, and alarms.
-If the user asks for anything else, say exactly: "I can't do that yet — I currently only handle calendar events, reminders, and alarms."
-Keep responses to 1-2 sentences.
-User knowledge:
-${wikiBlock}
+You are MIKA, a concise friendly personal assistant. Respond in 1-2 sentences only.
+You can help with calendar events, reminders, and alarms. For anything else say you can't do that yet.
+${actionContext}
+User knowledge: ${wikiBlock}
 <|end|>
 <|user|>
 ${transcription}
-(System: ${intentResult})
 <|end|>
 <|assistant|>`;
 

@@ -8,7 +8,6 @@ import {
   Platform,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
-import RNFS from 'react-native-fs';
 import Tts from 'react-native-tts';
 
 import {RecordButton} from '../components/RecordButton';
@@ -39,14 +38,21 @@ export function HomeScreen() {
       const history = await loadHistory();
       setTurns(history);
 
-      // Init TTS — must await getInitStatus on iOS before configuring
+      // Init TTS
       try {
         await Tts.getInitStatus();
+        Tts.addEventListener('tts-finish', () => setStage('idle'));
+        Tts.addEventListener('tts-error', (e) => {
+          console.error('TTS error:', e);
+          setStage('idle');
+        });
       } catch (e: any) {
-        if (e?.code !== 'no_engine') { throw e; }
-        await Tts.requestInstallEngine();
+        if (e?.code === 'no_engine') {
+          await Tts.requestInstallEngine();
+        }
+        // Non-fatal — app works without TTS
+        console.warn('TTS init failed:', e);
       }
-      Tts.addEventListener('tts-finish', () => setStage('idle'));
 
       // Init alarm foreground listeners
       initAlarmListeners();
@@ -152,7 +158,12 @@ export function HomeScreen() {
 
       // Step 4 — speak response
       setStage('speaking');
-      Tts.speak(response);
+      try {
+        await Tts.speak(response);
+      } catch (e) {
+        console.warn('TTS speak failed:', e);
+        setStage('idle');
+      }
 
       // Step 5 — save facts to wiki
       const facts = await extractWikiFacts(transcription, response);
