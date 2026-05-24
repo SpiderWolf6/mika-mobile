@@ -23,7 +23,7 @@ target 'MikaMobile' do
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
 
-  pod 'Permission-Microphone', :path => "../node_modules/react-native-permissions/ios/Microphone"
+  pod 'RNPermissions', :path => '../node_modules/react-native-permissions'
 
   post_install do |installer|
     react_native_post_install(
