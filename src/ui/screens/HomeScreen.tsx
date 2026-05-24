@@ -40,13 +40,28 @@ export function HomeScreen() {
       const history = await loadHistory();
       setTurns(history);
 
-      // Init TTS
+      // Init TTS — must await getInitStatus on iOS before configuring
+      try {
+        await Tts.getInitStatus();
+      } catch (e: any) {
+        // 'no_engine' on Android means no TTS engine installed — non-fatal
+        if (e?.code !== 'no_engine') { throw e; }
+        await Tts.requestInstallEngine();
+      }
       Tts.setDefaultRate(0.5);
       Tts.setDefaultPitch(1.0);
       Tts.addEventListener('tts-finish', () => setStage('idle'));
 
       // Init alarm foreground listeners
       initAlarmListeners();
+
+      // Init audio recorder once — triggers iOS mic permission prompt here
+      AudioRecord.init({
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        wavFile: 'mika_recording.wav',
+      });
 
       // Request mic permission on Android
       if (Platform.OS === 'android') {
@@ -79,13 +94,6 @@ export function HomeScreen() {
       return;
     }
     try {
-      const wavFile = 'mika_recording.wav';
-      AudioRecord.init({
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        wavFile,
-      });
       AudioRecord.start();
       setStage('recording');
       setCurrentTranscription('');
