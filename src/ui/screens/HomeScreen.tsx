@@ -5,12 +5,12 @@ import {
   View,
   Text,
   Alert,
-  PermissionsAndroid,
   Platform,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import RNFS from 'react-native-fs';
 import Tts from 'react-native-tts';
+import {check, request, PERMISSIONS, RESULTS} from 'react-native-permissions';
 
 import {RecordButton} from '../components/RecordButton';
 import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
@@ -44,39 +44,33 @@ export function HomeScreen() {
       try {
         await Tts.getInitStatus();
       } catch (e: any) {
-        // 'no_engine' on Android means no TTS engine installed — non-fatal
         if (e?.code !== 'no_engine') { throw e; }
         await Tts.requestInstallEngine();
       }
-      Tts.setDefaultRate(0.5);
-      Tts.setDefaultPitch(1.0);
       Tts.addEventListener('tts-finish', () => setStage('idle'));
 
       // Init alarm foreground listeners
       initAlarmListeners();
 
-      // Init audio recorder once — triggers iOS mic permission prompt here
-      AudioRecord.init({
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        wavFile: 'mika_recording.wav',
-      });
+      // Check / request mic permission, then init recorder once
+      const permission =
+        Platform.OS === 'android'
+          ? PERMISSIONS.ANDROID.RECORD_AUDIO
+          : PERMISSIONS.IOS.MICROPHONE;
 
-      // Request mic permission on Android
-      if (Platform.OS === 'android') {
-        const result = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-          {
-            title: 'Microphone Access',
-            message: 'MIKA needs microphone access to hear your voice commands.',
-            buttonPositive: 'Allow',
-            buttonNegative: 'Deny',
-          },
-        );
-        micPermissionRef.current = result === PermissionsAndroid.RESULTS.GRANTED;
-      } else {
-        micPermissionRef.current = true;
+      let status = await check(permission);
+      if (status === RESULTS.DENIED) {
+        status = await request(permission);
+      }
+      micPermissionRef.current = status === RESULTS.GRANTED;
+
+      if (micPermissionRef.current) {
+        AudioRecord.init({
+          sampleRate: 16000,
+          channels: 1,
+          bitsPerSample: 16,
+          wavFile: 'mika_recording.wav',
+        });
       }
     })();
 
