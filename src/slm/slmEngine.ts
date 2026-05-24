@@ -10,9 +10,11 @@ export async function initSLM(): Promise<void> {
   }
   llamaCtx = await initLlama({
     model: PHI3_MODEL_PATH,
-    use_mlock: true,
-    n_ctx: 4096,
-    n_threads: 4,
+    use_mlock: false,
+    use_mmap: true,
+    n_ctx: 1024,
+    n_threads: 6,
+    n_gpu_layers: 99,
   });
 }
 

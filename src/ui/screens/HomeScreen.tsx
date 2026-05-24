@@ -111,6 +111,14 @@ export function HomeScreen() {
       // Step 1 — stop recording
       const audioPath = await AudioRecord.stop();
 
+      // Reinit so next recording works cleanly
+      AudioRecord.init({
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        wavFile: 'mika_recording.wav',
+      });
+
       // Step 2 — transcribe
       setStage('transcribing');
       const transcription = await transcribeAudio(audioPath);
@@ -167,11 +175,16 @@ export function HomeScreen() {
       setCurrentTranscription('');
       // stage goes back to 'idle' via the tts-finish listener
     } catch (err) {
-      const msg = err instanceof Error
-        ? `${err.message}\n${err.stack ?? ''}`
-        : JSON.stringify(err, null, 2);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
       Alert.alert('Error', msg);
       setStage('idle');
+      // Reinit so button works on next attempt
+      AudioRecord.init({
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        wavFile: 'mika_recording.wav',
+      });
     }
   }, [stage]);
 
