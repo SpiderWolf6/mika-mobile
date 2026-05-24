@@ -1,5 +1,7 @@
 export type IntentType =
   | 'calendar'
+  | 'reminder'
+  | 'alarm'
   | 'search'
   | 'gmail'
   | 'discord'
@@ -39,3 +41,19 @@ export interface SLMContext {
   wikiSnippets: string[];
   recentTurns: ConversationTurn[];
 }
+
+// Stored alarm tracked internally by the app
+export interface AlarmRecord {
+  id: string;
+  label: string;
+  isoTime: string;
+  notifeeId: string;
+  active: boolean;
+}
+
+export type ProcessingStage =
+  | 'idle'
+  | 'recording'
+  | 'transcribing'
+  | 'thinking'
+  | 'speaking';

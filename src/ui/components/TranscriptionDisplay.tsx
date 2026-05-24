@@ -1,22 +1,42 @@
-import React from 'react';
+import React, {useEffect, useRef} from 'react';
 import {View, Text, StyleSheet, ScrollView} from 'react-native';
-import {ConversationTurn} from '../../types';
+import {ConversationTurn, ProcessingStage} from '../../types';
 
 interface TranscriptionDisplayProps {
+  stage: ProcessingStage;
   currentTranscription: string;
-  isRecording: boolean;
-  isProcessing: boolean;
   turns: ConversationTurn[];
 }
 
 export function TranscriptionDisplay({
+  stage,
   currentTranscription,
-  isRecording,
-  isProcessing,
   turns,
 }: TranscriptionDisplayProps) {
+  const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollToEnd({animated: true});
+  }, [turns, stage, currentTranscription]);
+
+  function stageLabel() {
+    switch (stage) {
+      case 'recording':    return 'Listening...';
+      case 'transcribing': return 'Transcribing...';
+      case 'thinking':     return 'MIKA is thinking...';
+      case 'speaking':     return 'MIKA is speaking...';
+      default:             return null;
+    }
+  }
+
+  const label = stageLabel();
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      ref={scrollRef}
+      style={styles.container}
+      contentContainerStyle={styles.content}>
+
       {turns.map(turn => (
         <View key={turn.id} style={styles.turnContainer}>
           <View style={styles.userBubble}>
@@ -30,13 +50,18 @@ export function TranscriptionDisplay({
         </View>
       ))}
 
-      {(isRecording || isProcessing || currentTranscription) ? (
-        <View style={styles.liveContainer}>
-          {isRecording && <Text style={styles.liveLabel}>Listening...</Text>}
-          {isProcessing && <Text style={styles.liveLabel}>Processing...</Text>}
-          {currentTranscription ? (
-            <Text style={styles.liveText}>{currentTranscription}</Text>
-          ) : null}
+      {/* Live transcription — shown immediately after recording stops */}
+      {currentTranscription && stage !== 'idle' ? (
+        <View style={styles.userBubble}>
+          <Text style={styles.bubbleLabel}>You</Text>
+          <Text style={styles.userText}>{currentTranscription}</Text>
+        </View>
+      ) : null}
+
+      {/* Stage indicator */}
+      {label ? (
+        <View style={styles.stagePill}>
+          <Text style={styles.stageText}>{label}</Text>
         </View>
       ) : null}
     </ScrollView>
@@ -86,19 +111,16 @@ const styles = StyleSheet.create({
     color: '#E0E0E0',
     fontSize: 15,
   },
-  liveContainer: {
-    padding: 16,
-    alignItems: 'center',
+  stagePill: {
+    alignSelf: 'center',
+    backgroundColor: '#2A2A2E',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginTop: 8,
   },
-  liveLabel: {
+  stageText: {
     color: '#888',
     fontSize: 13,
-    marginBottom: 8,
-  },
-  liveText: {
-    color: '#ccc',
-    fontSize: 15,
-    fontStyle: 'italic',
-    textAlign: 'center',
   },
 });

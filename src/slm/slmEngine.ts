@@ -35,20 +35,36 @@ export async function classifyIntent(
     .map(t => `User: ${t.userInput}\nMIKA: ${t.response}`)
     .join('\n');
 
-  const systemPrompt = `You are MIKA, a personal assistant.
-Classify the user's request into exactly one intent type:
-- calendar (create/list events)
-- search (web search)
-- gmail (send/read email)
-- discord (send a message via Discord bot)
-- wiki_query (answer a question about the user from their notes)
-- wiki_write (save a new fact about the user)
-- unknown
+  const systemPrompt = `You are MIKA, a personal assistant. Classify the user request into ONE intent.
 
-Respond ONLY with a JSON object like:
-{"type": "calendar", "confidence": 0.95, "payload": {"action": "create", "title": "Team meeting"}}
+AVAILABLE INTENTS:
+- calendar: create/edit/delete/list calendar events
+- reminder: create/edit/delete/list reminders in the Reminders app (with optional due time)
+- alarm: set/cancel/snooze/list alarms that ring loudly until dismissed
+- wiki_query: answer a question about the user using their personal notes
+- wiki_write: save a new fact about the user
+- unknown: anything else (you CANNOT do it, say so)
 
-User knowledge base:
+PAYLOAD RULES:
+- calendar create: {action:"create", title, startDate (ISO8601), endDate (ISO8601), notes?, location?}
+- calendar edit:   {action:"edit", title, eventId?, startDate?, endDate?, notes?, location?}
+- calendar delete: {action:"delete", title?, eventId?}
+- calendar list:   {action:"list", startDate?, endDate?}
+- reminder create: {action:"create", title, dueDate? (ISO8601), notes?}
+- reminder edit:   {action:"edit", title, reminderId?, dueDate?, notes?}
+- reminder delete: {action:"delete", title?, reminderId?}
+- reminder list:   {action:"list"}
+- alarm create:    {action:"create", label, isoTime (ISO8601)}
+- alarm cancel:    {action:"cancel", label}
+- alarm snooze:    {action:"snooze", label}
+- alarm list:      {action:"list"}
+
+Today is ${new Date().toISOString()}.
+
+Respond ONLY with valid JSON, no explanation:
+{"type":"calendar","confidence":0.95,"payload":{"action":"create","title":"Team meeting","startDate":"2026-05-24T15:00:00.000Z","endDate":"2026-05-24T16:00:00.000Z"}}
+
+User knowledge:
 ${wikiBlock}
 
 Recent conversation:
@@ -57,8 +73,8 @@ ${historyBlock}`;
   const prompt = `${systemPrompt}\n\nUser: ${transcription}\nJSON:`;
 
   const result = await llamaCtx!.completion(
-    {prompt, stop: ['\n', 'User:'], temperature: 0.1, n_predict: 200},
-    token => {},
+    {prompt, stop: ['\n', 'User:'], temperature: 0.1, n_predict: 300},
+    () => {},
   );
 
   try {
@@ -85,25 +101,27 @@ export async function generateResponse(
   const wikiBlock = context.wikiSnippets.join('\n\n');
 
   const prompt = `<|system|>
-You are MIKA, a helpful personal assistant. Be concise and friendly.
-User knowledge base:
+You are MIKA, a concise friendly personal assistant.
+You can ONLY help with: calendar events, reminders, and alarms.
+If the user asks for anything else, say exactly: "I can't do that yet — I currently only handle calendar events, reminders, and alarms."
+Keep responses to 1-2 sentences.
+User knowledge:
 ${wikiBlock}
 <|end|>
 <|user|>
 ${transcription}
-(Action taken: ${intentResult})
+(System: ${intentResult})
 <|end|>
 <|assistant|>`;
 
   const result = await llamaCtx!.completion(
-    {prompt, stop: ['<|end|>', '<|user|>'], temperature: 0.7, n_predict: 300},
-    token => {},
+    {prompt, stop: ['<|end|>', '<|user|>'], temperature: 0.7, n_predict: 150},
+    () => {},
   );
 
   return result.text.trim();
 }
 
-// Extracts any new facts from the conversation and returns them as markdown
 export async function extractWikiFacts(
   transcription: string,
   response: string,
@@ -112,18 +130,18 @@ export async function extractWikiFacts(
     await initSLM();
   }
 
-  const prompt = `Extract any new personal facts about the user from this conversation.
-If there are none, respond with exactly: NONE
-Otherwise respond with a short markdown bullet list.
+  const prompt = `Extract any new personal facts about the user from this exchange.
+If none, respond exactly: NONE
+Otherwise a short markdown bullet list only.
 
-User said: "${transcription}"
-Assistant said: "${response}"
+User: "${transcription}"
+Assistant: "${response}"
 
 Facts:`;
 
   const result = await llamaCtx!.completion(
     {prompt, stop: ['\n\n'], temperature: 0.1, n_predict: 150},
-    token => {},
+    () => {},
   );
 
   const text = result.text.trim();

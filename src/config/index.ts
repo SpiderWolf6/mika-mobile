@@ -7,11 +7,9 @@ export const WIKI_DIR =
     ? `${RNFS.DocumentDirectoryPath}/MikaWiki`
     : `${RNFS.ExternalDirectoryPath}/MikaWiki`;
 
-// Whisper model file bundled in the app
-export const WHISPER_MODEL_PATH = `${RNFS.MainBundlePath}/whisper-base.en.bin`;
-
-// Phi-3 mini GGUF model file bundled in the app
-export const PHI3_MODEL_PATH = `${RNFS.MainBundlePath}/phi-3-mini-4k-instruct.Q4_K_M.gguf`;
+// Model files downloaded on first launch into the documents directory
+export const WHISPER_MODEL_PATH = `${RNFS.DocumentDirectoryPath}/whisper-base.en.bin`;
+export const PHI3_MODEL_PATH = `${RNFS.DocumentDirectoryPath}/phi-3-mini-4k-instruct.Q4_K_M.gguf`;
 
 export const CLOUD_SERVER_URL = 'https://your-server.example.com/api/trigger';
 

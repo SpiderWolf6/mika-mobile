@@ -10,36 +10,45 @@ import {
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import RNFS from 'react-native-fs';
+import Tts from 'react-native-tts';
 
 import {RecordButton} from '../components/RecordButton';
 import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
 import {MikaStatusBar} from '../components/StatusBar';
 
-import {transcribeAudio, initWhisperEngine} from '../../slm/whisperEngine';
+import {transcribeAudio} from '../../slm/whisperEngine';
 import {classifyIntent, generateResponse, extractWikiFacts} from '../../slm/slmEngine';
 import {routeIntent} from '../../connectors';
+import {initAlarmListeners} from '../../connectors/alarmConnector';
 import {getRelevantWikiContext, appendWikiFile, ensureWikiDir} from '../../wiki/wikiManager';
 import {loadHistory, appendTurn} from '../../utils/conversationStore';
 
-import {ConversationTurn, IntentType} from '../../types';
+import {ConversationTurn, IntentType, ProcessingStage} from '../../types';
 
 export function HomeScreen() {
-  const [isRecording, setIsRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [stage, setStage] = useState<ProcessingStage>('idle');
   const [currentTranscription, setCurrentTranscription] = useState('');
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [activeIntent, setActiveIntent] = useState<IntentType | null>(null);
   const [connectorStatus, setConnectorStatus] = useState<string | null>(null);
 
-  const audioPathRef = useRef<string>('');
   const micPermissionRef = useRef<boolean>(false);
 
   useEffect(() => {
     (async () => {
       await ensureWikiDir();
-      await initWhisperEngine();
       const history = await loadHistory();
       setTurns(history);
+
+      // Init TTS
+      Tts.setDefaultRate(0.5);
+      Tts.setDefaultPitch(1.0);
+      Tts.addEventListener('tts-finish', () => setStage('idle'));
+
+      // Init alarm foreground listeners
+      initAlarmListeners();
+
+      // Request mic permission on Android
       if (Platform.OS === 'android') {
         const result = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
@@ -55,6 +64,10 @@ export function HomeScreen() {
         micPermissionRef.current = true;
       }
     })();
+
+    return () => {
+      Tts.removeAllListeners('tts-finish');
+    };
   }, []);
 
   const startRecording = useCallback(async () => {
@@ -67,7 +80,6 @@ export function HomeScreen() {
     }
     try {
       const wavFile = 'mika_recording.wav';
-      audioPathRef.current = `${RNFS.CachesDirectoryPath}/${wavFile}`;
       AudioRecord.init({
         sampleRate: 16000,
         channels: 1,
@@ -75,68 +87,67 @@ export function HomeScreen() {
         wavFile,
       });
       AudioRecord.start();
-      setIsRecording(true);
+      setStage('recording');
       setCurrentTranscription('');
       setActiveIntent(null);
       setConnectorStatus(null);
     } catch (err) {
-      Alert.alert('Recording Error', String(err));
+      Alert.alert('Recording Error', err instanceof Error ? err.message : JSON.stringify(err));
     }
   }, []);
 
   const stopRecordingAndProcess = useCallback(async () => {
-    if (!isRecording) {
+    if (stage !== 'recording') {
       return;
     }
-    setIsRecording(false);
-    setIsProcessing(true);
 
     try {
+      // Step 1 — stop recording
       const audioPath = await AudioRecord.stop();
-      audioPathRef.current = audioPath;
 
-      // 1. Transcribe
+      // Step 2 — transcribe
+      setStage('transcribing');
       const transcription = await transcribeAudio(audioPath);
       setCurrentTranscription(transcription);
 
       if (!transcription) {
-        setIsProcessing(false);
+        setStage('idle');
         return;
       }
 
-      // 2. Load wiki context and history
+      // Step 3 — SLM classify + act
+      setStage('thinking');
       const history = await loadHistory();
       const wikiSnippets = await getRelevantWikiContext(transcription);
       const slmContext = {wikiSnippets, recentTurns: history};
 
-      // 3. Classify intent
       const intent = await classifyIntent(transcription, slmContext);
       setActiveIntent(intent.type);
 
-      // 4. Route to connector (if applicable)
       let connectorSummary = 'No action taken';
-      if (intent.type !== 'unknown' && intent.type !== 'wiki_query') {
+      const actionable = !['unknown', 'wiki_query', 'wiki_write'].includes(intent.type);
+      if (actionable) {
         const result = await routeIntent(intent);
         connectorSummary = result.success
           ? `${intent.type}: success`
-          : `${intent.type}: ${result.error}`;
+          : `${intent.type} failed: ${result.error}`;
         setConnectorStatus(connectorSummary);
       }
 
-      // 5. Generate response
       const response = await generateResponse(transcription, connectorSummary, slmContext);
 
-      // 6. Save facts to wiki
+      // Step 4 — speak response
+      setStage('speaking');
+      Tts.speak(response);
+
+      // Step 5 — save facts to wiki
       const facts = await extractWikiFacts(transcription, response);
       if (facts) {
         const today = new Date().toISOString().split('T')[0];
-        await appendWikiFile(
-          'about-me.md',
-          `\n## ${today}\n${facts}`,
-        );
+        await appendWikiFile('about-me.md', `\n## ${today}\n${facts}`);
       }
 
-      // 7. Persist turn
+      // Step 6 — persist turn and update UI
       const turn: ConversationTurn = {
         id: `${Date.now()}`,
         timestamp: Date.now(),
@@ -148,21 +159,26 @@ export function HomeScreen() {
       await appendTurn(turn);
       setTurns(prev => [...prev, turn]);
       setCurrentTranscription('');
+      // stage goes back to 'idle' via the tts-finish listener
     } catch (err) {
-      Alert.alert('Processing Error', String(err));
-    } finally {
-      setIsProcessing(false);
+      const msg = err instanceof Error
+        ? `${err.message}\n${err.stack ?? ''}`
+        : JSON.stringify(err, null, 2);
+      Alert.alert('Error', msg);
+      setStage('idle');
     }
-  }, [isRecording]);
+  }, [stage]);
+
+  const isRecording = stage === 'recording';
+  const isProcessing = ['transcribing', 'thinking', 'speaking'].includes(stage);
 
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>MIKA</Text>
 
       <TranscriptionDisplay
+        stage={stage}
         currentTranscription={currentTranscription}
-        isRecording={isRecording}
-        isProcessing={isProcessing}
         turns={turns}
       />
 
