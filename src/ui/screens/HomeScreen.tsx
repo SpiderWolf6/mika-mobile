@@ -42,10 +42,7 @@ export function HomeScreen() {
       try {
         await Tts.getInitStatus();
         Tts.addEventListener('tts-finish', () => setStage('idle'));
-        Tts.addEventListener('tts-error', (e) => {
-          console.error('TTS error:', e);
-          setStage('idle');
-        });
+        Tts.addEventListener('tts-cancel', () => setStage('idle'));
       } catch (e: any) {
         if (e?.code === 'no_engine') {
           await Tts.requestInstallEngine();
@@ -86,6 +83,7 @@ export function HomeScreen() {
 
     return () => {
       Tts.removeAllListeners('tts-finish');
+      Tts.removeAllListeners('tts-cancel');
     };
   }, []);
 
