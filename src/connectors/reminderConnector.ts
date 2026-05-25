@@ -60,16 +60,12 @@ async function editReminder(intent: Intent): Promise<ConnectorResult> {
 
 async function deleteReminder(intent: Intent): Promise<ConnectorResult> {
   try {
-    let id = intent.payload.reminderId;
-    if (!id) {
-      const found = await findReminderByTitle(intent.payload.title ?? '');
-      if (!found) {
-        return {success: false, error: `Could not find reminder "${intent.payload.title}" to delete`};
-      }
-      id = found.id;
+    const found = await findReminderByTitle(intent.payload.title ?? intent.payload.reminderId ?? '');
+    if (!found) {
+      return {success: true, data: {notFound: true}};
     }
-    await RNCalendarEvents.removeEvent(id, {futureEvents: false});
-    return {success: true, data: {id}};
+    await RNCalendarEvents.removeEvent(found.id, {futureEvents: false});
+    return {success: true, data: {id: found.id}};
   } catch (err) {
     return {success: false, error: String(err)};
   }

@@ -39,14 +39,24 @@ function confirmationFor(
     } catch { return iso; }
   };
 
-  switch (connector) {
-    case 'alarm':
-      return `Got it. Your alarm${payload.label ? ` for ${payload.label}` : ''} is set for ${fmt(payload.isoTime)}.`;
-    case 'reminder':
-      return `Done. I've set a reminder for ${payload.title ?? 'that'} on ${fmt(payload.dueDate)}.`;
-    case 'calendar':
-      return `Done. ${payload.title ?? 'Your event'} has been added to your calendar on ${fmt(payload.startDate)}.`;
+  const action = payload.action ?? 'create';
+  const label = payload.label ?? payload.title ?? 'that';
+
+  if (connector === 'alarm') {
+    if (action === 'cancel' || action === 'delete') { return `Done. Your ${label} alarm has been cancelled.`; }
+    return `Got it. Your alarm${payload.label ? ` for ${payload.label}` : ''} is set for ${fmt(payload.isoTime)}.`;
   }
+  if (connector === 'reminder') {
+    if (action === 'delete') { return `Done. Your ${label} reminder has been removed.`; }
+    return `Done. I've set a reminder for ${payload.title ?? 'that'} on ${fmt(payload.dueDate)}.`;
+  }
+  // calendar
+  if (action === 'delete') { return `Done. ${label} has been removed from your calendar.`; }
+  if (action === 'edit') {
+    if (payload.newTitle) { return `Done. Renamed to ${payload.newTitle}.`; }
+    return `Done. ${label} has been updated${payload.startDate ? ` to ${fmt(payload.startDate)}` : ''}.`;
+  }
+  return `Done. ${payload.title ?? 'Your event'} has been added to your calendar on ${fmt(payload.startDate)}.`;
 }
 
 export function HomeScreen() {
@@ -213,9 +223,12 @@ export function HomeScreen() {
       const result = await routeIntent(intent);
       setConnectorStatus(result.success ? `${connector}: done` : `${connector}: failed`);
 
-      const response = result.success
-        ? confirmationFor(connector, intent.payload)
-        : `Sorry, I couldn't set that. ${result.error ?? ''}`.trim();
+      const notFound = result.success && (result.data as any)?.notFound;
+      const response = !result.success
+        ? `Sorry, something went wrong. ${result.error ?? ''}`.trim()
+        : notFound
+          ? `I couldn't find ${intent.payload.title ?? 'that'} to ${intent.payload.action}.`
+          : confirmationFor(connector, intent.payload);
       addTurn(transcription, intent, response);
       speak(response);
 

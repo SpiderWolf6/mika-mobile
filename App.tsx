@@ -4,6 +4,9 @@ import {SafeAreaProvider} from 'react-native-safe-area-context';
 import notifee, {AuthorizationStatus} from '@notifee/react-native';
 import {HomeScreen} from './src/ui/screens/HomeScreen';
 import {ModelDownloadScreen, areModelsReady} from './src/ui/screens/ModelDownloadScreen';
+import {DateResolverTestScreen} from './src/ui/screens/DateResolverTestScreen';
+
+const TEST_DATE_RESOLVER = true; // flip to true to test date resolver
 
 type AppState = 'checking' | 'downloading' | 'ready';
 
@@ -41,7 +44,7 @@ function App() {
       {appState === 'downloading' && (
         <ModelDownloadScreen onReady={() => setAppState('ready')} />
       )}
-      {appState === 'ready' && <HomeScreen />}
+      {appState === 'ready' && (TEST_DATE_RESOLVER ? <DateResolverTestScreen /> : <HomeScreen />)}
     </SafeAreaProvider>
   );
 }

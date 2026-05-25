@@ -15,7 +15,6 @@ export async function handleCalendarIntent(intent: Intent): Promise<ConnectorRes
     case 'create': return createEvent(intent);
     case 'edit':   return editEvent(intent);
     case 'delete': return deleteEvent(intent);
-    case 'list':   return listEvents(intent);
     default:
       return {success: false, error: `Unknown calendar action: ${intent.payload.action}`};
   }
@@ -24,16 +23,17 @@ export async function handleCalendarIntent(intent: Intent): Promise<ConnectorRes
 async function createEvent(intent: Intent): Promise<ConnectorResult> {
   try {
     const {title, startDate, endDate, notes, location} = intent.payload;
-    const start = startDate ?? new Date().toISOString();
-    const end   = endDate   ?? new Date(Date.now() + 3600000).toISOString();
-
+    if (!startDate) {
+      return {success: false, error: 'No start date provided'};
+    }
+    const end = endDate ?? new Date(new Date(startDate).getTime() + 3600000).toISOString();
     const eventId = await RNCalendarEvents.saveEvent(title ?? 'New Event', {
-      startDate: start,
+      startDate,
       endDate: end,
       notes: notes ?? '',
       location: location ?? '',
     });
-    return {success: true, data: {eventId, title, start, end}};
+    return {success: true, data: {eventId, title, startDate, endDate: end}};
   } catch (err) {
     return {success: false, error: String(err)};
   }
@@ -41,28 +41,20 @@ async function createEvent(intent: Intent): Promise<ConnectorResult> {
 
 async function editEvent(intent: Intent): Promise<ConnectorResult> {
   try {
-    const {eventId, title, startDate, endDate, notes, location} = intent.payload;
-    if (!eventId) {
-      // No ID supplied — find by title match in the next 30 days
-      const found = await findEventByTitle(intent.payload.title ?? '');
-      if (!found) {
-        return {success: false, error: `Could not find event "${intent.payload.title}" to edit`};
-      }
-      intent.payload.eventId = found.id;
+    const {title, newTitle, startDate, endDate, notes, location} = intent.payload;
+    const found = await findEventByTitle(title ?? '');
+    if (!found) {
+      return {success: true, data: {notFound: true}};
     }
 
-    const updates: Record<string, string> = {};
-    if (title)     { updates.title = title; }
-    if (startDate) { updates.startDate = startDate; }
-    if (endDate)   { updates.endDate = endDate; }
-    if (notes)     { updates.notes = notes; }
-    if (location)  { updates.location = location; }
-
-    await RNCalendarEvents.saveEvent(title ?? '', {
-      id: intent.payload.eventId,
-      ...updates,
+    await RNCalendarEvents.saveEvent(newTitle ?? found.title, {
+      id: found.id,
+      ...(startDate ? {startDate} : {}),
+      ...(endDate   ? {endDate}   : {}),
+      ...(notes     ? {notes}     : {}),
+      ...(location  ? {location}  : {}),
     });
-    return {success: true, data: {eventId: intent.payload.eventId}};
+    return {success: true, data: {eventId: found.id}};
   } catch (err) {
     return {success: false, error: String(err)};
   }
@@ -70,27 +62,13 @@ async function editEvent(intent: Intent): Promise<ConnectorResult> {
 
 async function deleteEvent(intent: Intent): Promise<ConnectorResult> {
   try {
-    let id = intent.payload.eventId;
-    if (!id) {
-      const found = await findEventByTitle(intent.payload.title ?? '');
-      if (!found) {
-        return {success: false, error: `Could not find event "${intent.payload.title}" to delete`};
-      }
-      id = found.id;
+    const found = await findEventByTitle(intent.payload.title ?? '');
+    if (!found) {
+      // Not an error — event just doesn't exist
+      return {success: true, data: {notFound: true}};
     }
-    await RNCalendarEvents.removeEvent(id);
-    return {success: true, data: {eventId: id}};
-  } catch (err) {
-    return {success: false, error: String(err)};
-  }
-}
-
-async function listEvents(intent: Intent): Promise<ConnectorResult> {
-  try {
-    const start = intent.payload.startDate ?? new Date().toISOString();
-    const end   = intent.payload.endDate   ?? new Date(Date.now() + 7 * 24 * 3600000).toISOString();
-    const events = await RNCalendarEvents.fetchAllEvents(start, end);
-    return {success: true, data: {events}};
+    await RNCalendarEvents.removeEvent(found.id);
+    return {success: true, data: {eventId: found.id}};
   } catch (err) {
     return {success: false, error: String(err)};
   }
@@ -98,7 +76,7 @@ async function listEvents(intent: Intent): Promise<ConnectorResult> {
 
 async function findEventByTitle(title: string) {
   const start = new Date().toISOString();
-  const end   = new Date(Date.now() + 30 * 24 * 3600000).toISOString();
+  const end = new Date(Date.now() + 60 * 24 * 3600000).toISOString();
   const events = await RNCalendarEvents.fetchAllEvents(start, end);
   return events.find(e => e.title.toLowerCase().includes(title.toLowerCase())) ?? null;
 }

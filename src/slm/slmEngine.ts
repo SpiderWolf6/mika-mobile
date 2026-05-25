@@ -4,13 +4,13 @@ import {PHI3_MODEL_PATH} from '../config';
 
 let llamaCtx: LlamaContext | null = null;
 
-async function getCtx(): Promise<LlamaContext> {
+export async function getSharedCtx(): Promise<LlamaContext> {
   if (llamaCtx) { return llamaCtx; }
   llamaCtx = await initLlama({
     model: PHI3_MODEL_PATH,
     use_mlock: false,
     use_mmap: true,
-    n_ctx: 512,
+    n_ctx: 768,
     n_threads: 4,
     n_gpu_layers: 99,
   });
@@ -23,7 +23,7 @@ export async function releaseSLM(): Promise<void> {
 }
 
 async function complete(prompt: string, maxTokens: number, stop: string[]): Promise<string> {
-  const ctx = await getCtx();
+  const ctx = await getSharedCtx();
   const result = await ctx.completion(
     {prompt, stop, temperature: 0.1, n_predict: maxTokens},
     () => {},
@@ -32,8 +32,6 @@ async function complete(prompt: string, maxTokens: number, stop: string[]): Prom
 }
 
 // ─── Agent 1: Gatekeeper ─────────────────────────────────────────────────────
-// Decides: cannot_do | cannot_answer | need_clarification | ready
-// Never hallucinates parameters — only routes.
 
 export async function runGatekeeper(
   userInput: string,
@@ -41,33 +39,34 @@ export async function runGatekeeper(
   now: string,
 ): Promise<GatekeeperOutcome> {
   const context = collectedInfo
-    ? `Previously collected info: ${collectedInfo}\nNew input: ${userInput}`
-    : `User input: ${userInput}`;
+    ? `Previously collected: ${collectedInfo}\nNew input: ${userInput}`
+    : `User: ${userInput}`;
 
   const prompt =
-    `You are MIKA's routing agent. Current datetime: ${now}\n` +
-    `MIKA can ONLY do: set alarm, set reminder, add calendar event.\n` +
-    `MIKA cannot browse the web, send messages, answer general knowledge questions, or do anything else.\n` +
+    `You are MIKA's router. Now: ${now}\n` +
+    `MIKA supports: alarm (create/cancel), reminder (create/delete), calendar event (create/edit/delete).\n` +
+    `MIKA cannot: search web, send messages, answer general knowledge, do math, give advice.\n` +
     `\n` +
+    `Output ONE JSON. Examples:\n` +
+    `User: "wake me up at 7am tomorrow" → {"status":"ready","connector":"alarm","summary":"create alarm at 7:00 AM tomorrow"}\n` +
+    `User: "set an alarm for 4" → {"status":"need_clarification","connector":"alarm","question":"4 AM or 4 PM?","partialInfo":"alarm at 4, day not specified"}\n` +
+    `User: "cancel my morning alarm" → {"status":"ready","connector":"alarm","summary":"cancel alarm labeled morning"}\n` +
+    `User: "remind me to call mom on Friday at 3pm" → {"status":"ready","connector":"reminder","summary":"create reminder: call mom, due Friday 3:00 PM"}\n` +
+    `User: "delete my call mom reminder" → {"status":"ready","connector":"reminder","summary":"delete reminder titled call mom"}\n` +
+    `User: "add team meeting to my calendar Wednesday at 10pm" → {"status":"ready","connector":"calendar","summary":"create calendar event: team meeting, Wednesday 10:00 PM, end 11:00 PM"}\n` +
+    `User: "move my team meeting to Thursday at 2pm" → {"status":"ready","connector":"calendar","summary":"edit calendar event: team meeting, new time Thursday 2:00 PM"}\n` +
+    `User: "delete my dentist appointment" → {"status":"ready","connector":"calendar","summary":"delete calendar event: dentist appointment"}\n` +
+    `User: "add meeting for next wednesday" → {"status":"need_clarification","connector":"calendar","question":"What time is the meeting?","partialInfo":"calendar event: meeting, next Wednesday, time unknown"}\n` +
+    `User: "what is the capital of France" → {"status":"cannot_answer"}\n` +
+    `User: "send John a message" → {"status":"cannot_do"}\n` +
+    `\n` +
+    `Required fields — alarm: time+AM/PM+day. reminder: title+date+time. calendar: name+date+time.\n` +
     `${context}\n` +
-    `\n` +
-    `Decide ONE of these outcomes and output JSON only:\n` +
-    `- User wants something MIKA cannot do (not alarm/reminder/calendar): {"status":"cannot_do"}\n` +
-    `- User asks a question MIKA cannot answer (no context, general knowledge): {"status":"cannot_answer"}\n` +
-    `- User wants alarm/reminder/calendar but info is MISSING or AMBIGUOUS (no date, no time, ambiguous AM/PM, no event name, etc): {"status":"need_clarification","connector":"<alarm|reminder|calendar>","question":"<one short question to ask>","partialInfo":"<summarize what you know so far>"}\n` +
-    `- User wants alarm/reminder/calendar and ALL required info is present: {"status":"ready","connector":"<alarm|reminder|calendar>","summary":"<one sentence summary of the full request with all details>"}\n` +
-    `\n` +
-    `Required info rules:\n` +
-    `- alarm: needs time (with AM/PM unambiguous) and day. If user says "4 o'clock" without AM/PM, that is ambiguous — ask.\n` +
-    `- reminder: needs a title/task and a due date+time.\n` +
-    `- calendar: needs event name, date, start time (AM/PM unambiguous). End time optional (default 1 hour).\n` +
-    `\n` +
     `JSON:`;
 
-  const raw = await complete(prompt, 120, ['\n\n', 'User input:', 'Previously']);
+  const raw = await complete(prompt, 80, ['\n\n', 'User:', 'Previously']);
 
   try {
-    // Extract first JSON object from output
     const match = raw.match(/\{[\s\S]*?\}/);
     if (!match) { throw new Error('no json'); }
     const parsed = JSON.parse(match[0]);
@@ -91,28 +90,29 @@ export async function runGatekeeper(
     }
     throw new Error('unknown status');
   } catch {
-    // If parsing fails, treat as cannot_do to avoid hallucination
     return {status: 'cannot_do'};
   }
 }
 
-// ─── Agent 2: Payload Extractor ───────────────────────────────────────────────
-// Only runs when gatekeeper says ready. Extracts exact connector parameters.
+// ─── Agent 2: Payload Extractors ─────────────────────────────────────────────
 
 export async function extractAlarmPayload(summary: string, now: string): Promise<Intent> {
   const prompt =
-    `Current datetime: ${now}\n` +
-    `Extract alarm details from this request: "${summary}"\n` +
-    `Output ONE JSON object only. Compute the exact ISO 8601 datetime for isoTime based on the current datetime above.\n` +
-    `{"action":"create","label":"<short label>","isoTime":"<ISO8601 datetime>"}\n` +
+    `Now: ${now}\n` +
+    `Extract alarm JSON from: "${summary}"\n` +
+    `Output ONE JSON only. Compute isoTime from Now above.\n` +
+    `Examples:\n` +
+    `"create alarm at 7:00 AM tomorrow" → {"action":"create","label":"Wake up","isoTime":"2025-05-26T07:00:00"}\n` +
+    `"create alarm Wake up Friday 6:30 AM" → {"action":"create","label":"Wake up","isoTime":"2025-05-30T06:30:00"}\n` +
+    `"cancel alarm labeled morning" → {"action":"cancel","label":"morning"}\n` +
+    `"cancel my 7am alarm" → {"action":"cancel","label":"7am"}\n` +
     `JSON:`;
 
-  const raw = await complete(prompt, 80, ['\n\n']);
+  const raw = await complete(prompt, 60, ['\n\n']);
   try {
     const match = raw.match(/\{[\s\S]*?\}/);
     if (!match) { throw new Error('no json'); }
-    const p = JSON.parse(match[0]);
-    return {type: 'alarm', confidence: 0.95, payload: p};
+    return {type: 'alarm', confidence: 0.95, payload: JSON.parse(match[0])};
   } catch {
     return {type: 'alarm', confidence: 0, payload: {action: 'create', label: 'Alarm', isoTime: ''}};
   }
@@ -120,18 +120,21 @@ export async function extractAlarmPayload(summary: string, now: string): Promise
 
 export async function extractReminderPayload(summary: string, now: string): Promise<Intent> {
   const prompt =
-    `Current datetime: ${now}\n` +
-    `Extract reminder details from this request: "${summary}"\n` +
-    `Output ONE JSON object only. Compute the exact ISO 8601 datetime for dueDate.\n` +
-    `{"action":"create","title":"<reminder title>","dueDate":"<ISO8601 datetime>"}\n` +
+    `Now: ${now}\n` +
+    `Extract reminder JSON from: "${summary}"\n` +
+    `Output ONE JSON only. Compute dueDate from Now above.\n` +
+    `Examples:\n` +
+    `"create reminder: call mom, due Friday 3:00 PM" → {"action":"create","title":"Call mom","dueDate":"2025-05-30T15:00:00"}\n` +
+    `"create reminder: buy groceries, due tomorrow 9:00 AM" → {"action":"create","title":"Buy groceries","dueDate":"2025-05-26T09:00:00"}\n` +
+    `"delete reminder titled call mom" → {"action":"delete","title":"Call mom"}\n` +
+    `"delete my grocery reminder" → {"action":"delete","title":"grocery"}\n` +
     `JSON:`;
 
-  const raw = await complete(prompt, 80, ['\n\n']);
+  const raw = await complete(prompt, 60, ['\n\n']);
   try {
     const match = raw.match(/\{[\s\S]*?\}/);
     if (!match) { throw new Error('no json'); }
-    const p = JSON.parse(match[0]);
-    return {type: 'reminder', confidence: 0.95, payload: p};
+    return {type: 'reminder', confidence: 0.95, payload: JSON.parse(match[0])};
   } catch {
     return {type: 'reminder', confidence: 0, payload: {action: 'create', title: 'Reminder', dueDate: ''}};
   }
@@ -139,34 +142,24 @@ export async function extractReminderPayload(summary: string, now: string): Prom
 
 export async function extractCalendarPayload(summary: string, now: string): Promise<Intent> {
   const prompt =
-    `Current datetime: ${now}\n` +
-    `Extract calendar event details from this request: "${summary}"\n` +
-    `Output ONE JSON object only. Compute exact ISO 8601 datetimes. End time defaults to 1 hour after start if not specified.\n` +
-    `{"action":"create","title":"<event name>","startDate":"<ISO8601>","endDate":"<ISO8601>","notes":"<optional notes or empty string>"}\n` +
+    `Now: ${now}\n` +
+    `Extract calendar event JSON from: "${summary}"\n` +
+    `Output ONE JSON only. Compute startDate and endDate from Now. endDate defaults to 1 hour after startDate.\n` +
+    `Examples:\n` +
+    `"create calendar event: team meeting, Wednesday 10:00 PM, end 11:00 PM" → {"action":"create","title":"Team meeting","startDate":"2025-05-28T22:00:00","endDate":"2025-05-28T23:00:00","notes":""}\n` +
+    `"create calendar event: dentist, Friday 2:00 PM" → {"action":"create","title":"Dentist","startDate":"2025-05-30T14:00:00","endDate":"2025-05-30T15:00:00","notes":""}\n` +
+    `"edit calendar event: team meeting, new time Thursday 2:00 PM" → {"action":"edit","title":"Team meeting","startDate":"2025-05-29T14:00:00","endDate":"2025-05-29T15:00:00"}\n` +
+    `"edit calendar event: dentist, rename to teeth cleaning" → {"action":"edit","title":"Dentist","newTitle":"Teeth cleaning"}\n` +
+    `"delete calendar event: dentist appointment" → {"action":"delete","title":"Dentist appointment"}\n` +
+    `"delete calendar event: team meeting" → {"action":"delete","title":"Team meeting"}\n` +
     `JSON:`;
 
-  const raw = await complete(prompt, 100, ['\n\n']);
+  const raw = await complete(prompt, 80, ['\n\n']);
   try {
     const match = raw.match(/\{[\s\S]*?\}/);
     if (!match) { throw new Error('no json'); }
-    const p = JSON.parse(match[0]);
-    return {type: 'calendar', confidence: 0.95, payload: p};
+    return {type: 'calendar', confidence: 0.95, payload: JSON.parse(match[0])};
   } catch {
     return {type: 'calendar', confidence: 0, payload: {action: 'create', title: 'Event', startDate: '', endDate: ''}};
   }
-}
-
-// ─── Response generator ───────────────────────────────────────────────────────
-
-export async function generateResponse(
-  userInput: string,
-  outcome: string,
-): Promise<string> {
-  const prompt =
-    `You are MIKA, a voice assistant. Reply in 1-2 short sentences. No markdown, no lists.\n` +
-    `Outcome: ${outcome}\n` +
-    `User said: "${userInput}"\n` +
-    `MIKA reply:`;
-
-  return complete(prompt, 80, ['\n', 'User said:']);
 }
