@@ -10,8 +10,8 @@ export async function initSLM(): Promise<void> {
     model: PHI3_MODEL_PATH,
     use_mlock: false,
     use_mmap: true,
-    n_ctx: 2048,
-    n_threads: 6,
+    n_ctx: 512,
+    n_threads: 4,
     n_gpu_layers: 99,
   });
 }

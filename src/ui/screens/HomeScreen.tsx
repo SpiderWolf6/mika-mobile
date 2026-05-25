@@ -19,10 +19,8 @@ import {transcribeAudio} from '../../slm/whisperEngine';
 import {classifyIntent, generateResponse} from '../../slm/slmEngine';
 import {routeIntent} from '../../connectors';
 import {initAlarmListeners} from '../../connectors/alarmConnector';
-import {ensureWikiDir} from '../../wiki/wikiManager';
-import {loadHistory, appendTurn} from '../../utils/conversationStore';
-
-import {ConversationTurn, IntentType, ProcessingStage} from '../../types';
+import {IntentType, ProcessingStage} from '../../types';
+import type {ConversationTurn} from '../../types';
 
 export function HomeScreen() {
   const [stage, setStage] = useState<ProcessingStage>('idle');
@@ -35,10 +33,6 @@ export function HomeScreen() {
 
   useEffect(() => {
     (async () => {
-      await ensureWikiDir();
-      const history = await loadHistory();
-      setTurns(history);
-
       try {
         await Tts.getInitStatus();
         Tts.setDucking(true);
@@ -149,7 +143,6 @@ export function HomeScreen() {
         intent,
         response,
       };
-      await appendTurn(turn);
       setTurns(prev => [...prev, turn]);
       setCurrentTranscription('');
 
