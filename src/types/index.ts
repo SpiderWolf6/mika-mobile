@@ -2,11 +2,6 @@ export type IntentType =
   | 'calendar'
   | 'reminder'
   | 'alarm'
-  | 'search'
-  | 'gmail'
-  | 'discord'
-  | 'wiki_query'
-  | 'wiki_write'
   | 'unknown';
 
 export interface Intent {
@@ -37,7 +32,6 @@ export interface ConnectorResult {
   error?: string;
 }
 
-// Stored alarm tracked internally by the app
 export interface AlarmRecord {
   id: string;
   label: string;
@@ -52,3 +46,16 @@ export type ProcessingStage =
   | 'transcribing'
   | 'thinking'
   | 'speaking';
+
+// Result from Agent 1 (gatekeeper)
+export type GatekeeperOutcome =
+  | {status: 'cannot_do'}
+  | {status: 'cannot_answer'}
+  | {status: 'need_clarification'; connector: 'alarm' | 'reminder' | 'calendar'; question: string; partialInfo: string}
+  | {status: 'ready'; connector: 'alarm' | 'reminder' | 'calendar'; summary: string};
+
+// In-memory clarification state — cleared after task completes or on restart
+export interface ClarificationState {
+  connector: 'alarm' | 'reminder' | 'calendar';
+  collectedInfo: string; // everything known so far, plain text
+}

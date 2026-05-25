@@ -15,11 +15,39 @@ import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
 import {MikaStatusBar} from '../components/StatusBar';
 
 import {transcribeAudio} from '../../slm/whisperEngine';
-import {classifyIntent, generateResponse} from '../../slm/slmEngine';
+import {
+  runGatekeeper,
+  extractAlarmPayload,
+  extractReminderPayload,
+  extractCalendarPayload,
+} from '../../slm/slmEngine';
 import {routeIntent} from '../../connectors';
 import {initAlarmListeners} from '../../connectors/alarmConnector';
-import {IntentType, ProcessingStage} from '../../types';
-import type {ConversationTurn} from '../../types';
+
+import {ClarificationState, ConversationTurn, IntentType, ProcessingStage} from '../../types';
+
+function confirmationFor(
+  connector: 'alarm' | 'reminder' | 'calendar',
+  payload: Record<string, string>,
+): string {
+  const fmt = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString('en-US', {
+        weekday: 'long', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      });
+    } catch { return iso; }
+  };
+
+  switch (connector) {
+    case 'alarm':
+      return `Got it. Your alarm${payload.label ? ` for ${payload.label}` : ''} is set for ${fmt(payload.isoTime)}.`;
+    case 'reminder':
+      return `Done. I've set a reminder for ${payload.title ?? 'that'} on ${fmt(payload.dueDate)}.`;
+    case 'calendar':
+      return `Done. ${payload.title ?? 'Your event'} has been added to your calendar on ${fmt(payload.startDate)}.`;
+  }
+}
 
 export function HomeScreen() {
   const [stage, setStage] = useState<ProcessingStage>('idle');
@@ -30,6 +58,18 @@ export function HomeScreen() {
 
   const micPermissionRef = useRef<boolean>(false);
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // In-memory only — cleared on restart, no persistence
+  const clarificationRef = useRef<ClarificationState | null>(null);
+
+  const speak = useCallback((text: string) => {
+    setStage('speaking');
+    Tts.speak(text);
+    const ms = Math.max(4000, text.split(' ').length * 400);
+    ttsTimeoutRef.current = setTimeout(
+      () => setStage(s => (s === 'speaking' ? 'idle' : s)),
+      ms,
+    );
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -37,12 +77,16 @@ export function HomeScreen() {
         await Tts.getInitStatus();
         Tts.setDucking(true);
         Tts.setIgnoreSilentSwitch('ignore');
-        Tts.addEventListener('tts-finish', () => { clearTimeout(ttsTimeoutRef.current); setStage('idle'); });
-        Tts.addEventListener('tts-cancel', () => { clearTimeout(ttsTimeoutRef.current); setStage('idle'); });
+        Tts.addEventListener('tts-finish', () => {
+          clearTimeout(ttsTimeoutRef.current);
+          setStage('idle');
+        });
+        Tts.addEventListener('tts-cancel', () => {
+          clearTimeout(ttsTimeoutRef.current);
+          setStage('idle');
+        });
       } catch (e: any) {
-        if (e?.code === 'no_engine') {
-          await Tts.requestInstallEngine();
-        }
+        if (e?.code === 'no_engine') { await Tts.requestInstallEngine(); }
         console.warn('TTS init failed:', e);
       }
 
@@ -82,7 +126,7 @@ export function HomeScreen() {
     if (!micPermissionRef.current) {
       Alert.alert(
         'Microphone Access Required',
-        'MIKA needs microphone access to hear your voice commands. Please enable it in Settings.',
+        'MIKA needs microphone access. Please enable it in Settings.',
       );
       return;
     }
@@ -98,13 +142,10 @@ export function HomeScreen() {
   }, []);
 
   const stopRecordingAndProcess = useCallback(async () => {
-    if (stage !== 'recording') {
-      return;
-    }
+    if (stage !== 'recording') { return; }
 
     try {
       const audioPath = await AudioRecord.stop();
-
       AudioRecord.init({
         sampleRate: 16000,
         channels: 1,
@@ -115,43 +156,69 @@ export function HomeScreen() {
       setStage('transcribing');
       const transcription = await transcribeAudio(audioPath);
       setCurrentTranscription(transcription);
+      if (!transcription) { setStage('idle'); return; }
 
-      if (!transcription) {
-        setStage('idle');
+      setStage('thinking');
+      const now = new Date().toISOString();
+
+      // If we're mid-clarification, append new input to what we already know
+      const collectedInfo = clarificationRef.current
+        ? `${clarificationRef.current.collectedInfo} | Follow-up: ${transcription}`
+        : null;
+
+      // ── Agent 1: Gatekeeper ──
+      const gate = await runGatekeeper(transcription, collectedInfo, now);
+
+      if (gate.status === 'cannot_do') {
+        clarificationRef.current = null;
+        const reply = 'I don\'t have the ability to do that. I can set alarms, reminders, and calendar events.';
+        addTurn(transcription, {type: 'unknown', confidence: 1, payload: {}}, reply);
+        speak(reply);
         return;
       }
 
-      setStage('thinking');
-      const intent = await classifyIntent(transcription);
-      setActiveIntent(intent.type);
-
-      let connectorSummary = 'No action taken';
-      if (!['unknown', 'wiki_query', 'wiki_write'].includes(intent.type)) {
-        const result = await routeIntent(intent);
-        connectorSummary = result.success
-          ? `${intent.type}: success`
-          : `${intent.type} failed: ${result.error}`;
-        setConnectorStatus(connectorSummary);
+      if (gate.status === 'cannot_answer') {
+        clarificationRef.current = null;
+        const reply = 'I cannot answer that. I can set alarms, reminders, and calendar events.';
+        addTurn(transcription, {type: 'unknown', confidence: 1, payload: {}}, reply);
+        speak(reply);
+        return;
       }
 
-      const response = await generateResponse(transcription, connectorSummary);
+      if (gate.status === 'need_clarification') {
+        // Store what we know so far; next voice turn will append to it
+        clarificationRef.current = {
+          connector: gate.connector,
+          collectedInfo: gate.partialInfo,
+        };
+        addTurn(transcription, {type: 'unknown', confidence: 1, payload: {}}, gate.question);
+        speak(gate.question);
+        return;
+      }
 
-      const turn: ConversationTurn = {
-        id: `${Date.now()}`,
-        timestamp: Date.now(),
-        userInput: transcription,
-        transcription,
-        intent,
-        response,
-      };
-      setTurns(prev => [...prev, turn]);
-      setCurrentTranscription('');
+      // gate.status === 'ready' — run Agent 2
+      clarificationRef.current = null;
+      const {connector, summary} = gate;
+      setActiveIntent(connector);
 
-      setStage('speaking');
-      Tts.speak(response);
-      const wordCount = response.split(' ').length;
-      const ms = Math.max(4000, wordCount * 400);
-      ttsTimeoutRef.current = setTimeout(() => setStage(s => s === 'speaking' ? 'idle' : s), ms);
+      let intent;
+      if (connector === 'alarm') {
+        intent = await extractAlarmPayload(summary, now);
+      } else if (connector === 'reminder') {
+        intent = await extractReminderPayload(summary, now);
+      } else {
+        intent = await extractCalendarPayload(summary, now);
+      }
+
+      const result = await routeIntent(intent);
+      setConnectorStatus(result.success ? `${connector}: done` : `${connector}: failed`);
+
+      const response = result.success
+        ? confirmationFor(connector, intent.payload)
+        : `Sorry, I couldn't set that. ${result.error ?? ''}`.trim();
+      addTurn(transcription, intent, response);
+      speak(response);
+
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
       Alert.alert('Error', msg);
@@ -163,10 +230,24 @@ export function HomeScreen() {
         wavFile: 'mika_recording.wav',
       });
     }
-  }, [stage]);
+  }, [stage, speak]);
 
-  const isRecording = stage === 'recording';
-  const isProcessing = ['transcribing', 'thinking', 'speaking'].includes(stage);
+  function addTurn(
+    transcription: string,
+    intent: ConversationTurn['intent'],
+    response: string,
+  ) {
+    const turn: ConversationTurn = {
+      id: `${Date.now()}`,
+      timestamp: Date.now(),
+      userInput: transcription,
+      transcription,
+      intent,
+      response,
+    };
+    setTurns(prev => [...prev, turn]);
+    setCurrentTranscription('');
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -179,8 +260,8 @@ export function HomeScreen() {
       <MikaStatusBar intent={activeIntent} connectorStatus={connectorStatus} />
       <View style={styles.recordRow}>
         <RecordButton
-          isRecording={isRecording}
-          isProcessing={isProcessing}
+          isRecording={stage === 'recording'}
+          isProcessing={['transcribing', 'thinking', 'speaking'].includes(stage)}
           onPressIn={startRecording}
           onPressOut={stopRecordingAndProcess}
         />
@@ -190,22 +271,7 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#1A1A1E',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#fff',
-    letterSpacing: 6,
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  recordRow: {
-    paddingBottom: 40,
-    paddingTop: 16,
-    alignItems: 'center',
-  },
+  container: {flex: 1, backgroundColor: '#1A1A1E', alignItems: 'center'},
+  title: {fontSize: 28, fontWeight: '700', color: '#fff', letterSpacing: 6, marginTop: 12, marginBottom: 8},
+  recordRow: {paddingBottom: 40, paddingTop: 16, alignItems: 'center'},
 });
