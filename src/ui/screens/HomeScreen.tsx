@@ -1,12 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {
-  SafeAreaView,
-  StyleSheet,
-  View,
-  Text,
-  Alert,
-  Platform,
-} from 'react-native';
+import {SafeAreaView, StyleSheet, View, Text, Alert, Platform} from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import RNFS from 'react-native-fs';
 import Tts from 'react-native-tts';
@@ -24,6 +17,17 @@ import {loadHistory, appendTurn} from '../../utils/conversationStore';
 
 import {ConversationTurn, IntentType, ProcessingStage} from '../../types';
 
+const WAV_FILE = 'mika_recording.wav';
+
+function initRecorder() {
+  AudioRecord.init({
+    sampleRate: 16000,
+    channels: 1,
+    bitsPerSample: 16,
+    wavFile: WAV_FILE,
+  });
+}
+
 export function HomeScreen() {
   const [stage, setStage] = useState<ProcessingStage>('idle');
   const [currentTranscription, setCurrentTranscription] = useState('');
@@ -31,57 +35,39 @@ export function HomeScreen() {
   const [activeIntent, setActiveIntent] = useState<IntentType | null>(null);
   const [connectorStatus, setConnectorStatus] = useState<string | null>(null);
 
-  const micPermissionRef = useRef<boolean>(false);
-  const recorderReadyRef = useRef<boolean>(false);
+  const micGranted = useRef(false);
 
   useEffect(() => {
     (async () => {
       await ensureWikiDir();
       const history = await loadHistory();
       setTurns(history);
+      initAlarmListeners();
 
-      // Init TTS
+      // TTS init
       try {
         await Tts.getInitStatus();
         Tts.setDucking(true);
-        Tts.addEventListener('tts-finish', () => setStage('idle'));
-        Tts.addEventListener('tts-cancel', () => setStage('idle'));
       } catch (e: any) {
-        if (e?.code === 'no_engine') {
-          await Tts.requestInstallEngine();
-        }
-        console.warn('TTS init failed:', e);
+        if (e?.code === 'no_engine') { await Tts.requestInstallEngine(); }
       }
+      Tts.addEventListener('tts-finish', () => setStage('idle'));
+      Tts.addEventListener('tts-cancel', () => setStage('idle'));
 
-      // Init alarm foreground listeners
-      initAlarmListeners();
-
-      // On Android, explicitly request mic permission
-      // On iOS, the system dialog fires automatically on first AudioRecord.init()
+      // Android mic permission
       if (Platform.OS === 'android') {
         const {PermissionsAndroid} = require('react-native');
-        const result = await PermissionsAndroid.request(
+        const r = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-          {
-            title: 'Microphone Access',
-            message: 'MIKA needs microphone access to hear your voice commands.',
-            buttonPositive: 'Allow',
-            buttonNegative: 'Deny',
-          },
+          {title: 'Microphone', message: 'MIKA needs mic access.', buttonPositive: 'Allow', buttonNegative: 'Deny'},
         );
-        micPermissionRef.current = result === PermissionsAndroid.RESULTS.GRANTED;
+        micGranted.current = r === PermissionsAndroid.RESULTS.GRANTED;
       } else {
-        micPermissionRef.current = true;
+        micGranted.current = true;
       }
 
-      // Init recorder once — on iOS this triggers the mic permission dialog
-      AudioRecord.init({
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        wavFile: 'mika_recording.wav',
-      });
-      recorderReadyRef.current = true;
+      // Init recorder — iOS mic dialog fires here on first launch
+      initRecorder();
     })();
 
     return () => {
@@ -90,16 +76,9 @@ export function HomeScreen() {
     };
   }, []);
 
-  const startRecording = useCallback(async () => {
-    if (!micPermissionRef.current) {
-      Alert.alert(
-        'Microphone Access Required',
-        'MIKA needs microphone access to hear your voice commands. Please enable it in Settings.',
-      );
-      return;
-    }
-    if (!recorderReadyRef.current) {
-      Alert.alert('Not ready', 'Recorder is still initializing, try again.');
+  const startRecording = useCallback(() => {
+    if (!micGranted.current) {
+      Alert.alert('Microphone Required', 'Enable microphone access in Settings.');
       return;
     }
     try {
@@ -109,55 +88,39 @@ export function HomeScreen() {
       setActiveIntent(null);
       setConnectorStatus(null);
     } catch (err) {
-      Alert.alert('Recording Error', err instanceof Error ? err.message : JSON.stringify(err));
+      Alert.alert('Recording Error', err instanceof Error ? err.message : String(err));
     }
   }, []);
 
-  const stopRecordingAndProcess = useCallback(async () => {
-    if (stage !== 'recording') {
-      return;
-    }
+  const stopAndProcess = useCallback(async () => {
+    if (stage !== 'recording') { return; }
 
     try {
-      // Step 1 — stop recording and wait for WAV to be fully flushed
-      recorderReadyRef.current = false;
+      // Stop and wait for WAV to flush to disk
       await AudioRecord.stop();
-
-      // Poll until file has real data (WAV header alone is 44 bytes)
-      const wavPath = `${RNFS.CachesDirectoryPath}/mika_recording.wav`;
-      for (let i = 0; i < 20; i++) {
+      const wavPath = `${RNFS.CachesDirectoryPath}/${WAV_FILE}`;
+      for (let i = 0; i < 15; i++) {
         const info = await RNFS.stat(wavPath).catch(() => null);
         if (info && info.size > 1000) { break; }
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 100));
       }
 
-      // Reinit ready for next recording
-      AudioRecord.init({
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        wavFile: 'mika_recording.wav',
-      });
-      recorderReadyRef.current = true;
+      // Reinit ready for next press
+      initRecorder();
 
-      // Step 2 — transcribe
+      // Transcribe
       setStage('transcribing');
       const transcription = await transcribeAudio(wavPath);
       setCurrentTranscription(transcription);
+      if (!transcription) { setStage('idle'); return; }
 
-      if (!transcription) {
-        setStage('idle');
-        return;
-      }
-
-      // Step 3 — SLM classify + act
+      // Classify + act
       setStage('thinking');
       const intent = await classifyIntent(transcription);
       setActiveIntent(intent.type);
 
       let connectorSummary = 'No action taken';
-      const actionable = !['unknown', 'wiki_query', 'wiki_write'].includes(intent.type);
-      if (actionable) {
+      if (!['unknown', 'wiki_query', 'wiki_write'].includes(intent.type)) {
         const result = await routeIntent(intent);
         connectorSummary = result.success
           ? `${intent.type}: success`
@@ -165,21 +128,10 @@ export function HomeScreen() {
         setConnectorStatus(connectorSummary);
       }
 
+      // Generate response
       const response = await generateResponse(transcription, connectorSummary);
 
-      // Step 4 — speak response
-      // On iOS, deactivate the record audio session so TTS can take over
-      setStage('speaking');
-      try {
-        await new Promise(resolve => setTimeout(resolve, 800));
-        Tts.stop();
-        Tts.speak(response);
-      } catch (e) {
-        console.warn('TTS speak failed:', e);
-        setStage('idle');
-      }
-
-      // Step 5 — persist turn and update UI
+      // Persist turn
       const turn: ConversationTurn = {
         id: `${Date.now()}`,
         timestamp: Date.now(),
@@ -191,44 +143,32 @@ export function HomeScreen() {
       await appendTurn(turn);
       setTurns(prev => [...prev, turn]);
       setCurrentTranscription('');
-      // stage goes back to 'idle' via the tts-finish listener
+
+      // Speak — stage goes idle via tts-finish listener
+      setStage('speaking');
+      Tts.speak(response);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
-      Alert.alert('Error', msg);
+      Alert.alert('Error', err instanceof Error ? err.message : String(err));
       setStage('idle');
-      if (!recorderReadyRef.current) {
-        AudioRecord.init({
-          sampleRate: 16000,
-          channels: 1,
-          bitsPerSample: 16,
-          wavFile: 'mika_recording.wav',
-        });
-        recorderReadyRef.current = true;
-      }
+      initRecorder();
     }
   }, [stage]);
-
-  const isRecording = stage === 'recording';
-  const isProcessing = ['transcribing', 'thinking', 'speaking'].includes(stage);
 
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>MIKA</Text>
-
       <TranscriptionDisplay
         stage={stage}
         currentTranscription={currentTranscription}
         turns={turns}
       />
-
       <MikaStatusBar intent={activeIntent} connectorStatus={connectorStatus} />
-
       <View style={styles.recordRow}>
         <RecordButton
-          isRecording={isRecording}
-          isProcessing={isProcessing}
+          isRecording={stage === 'recording'}
+          isProcessing={['transcribing', 'thinking', 'speaking'].includes(stage)}
           onPressIn={startRecording}
-          onPressOut={stopRecordingAndProcess}
+          onPressOut={stopAndProcess}
         />
       </View>
     </SafeAreaView>
@@ -236,22 +176,7 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#1A1A1E',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#fff',
-    letterSpacing: 6,
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  recordRow: {
-    paddingBottom: 40,
-    paddingTop: 16,
-    alignItems: 'center',
-  },
+  container: {flex: 1, backgroundColor: '#1A1A1E', alignItems: 'center'},
+  title: {fontSize: 28, fontWeight: '700', color: '#fff', letterSpacing: 6, marginTop: 12, marginBottom: 8},
+  recordRow: {paddingBottom: 40, paddingTop: 16, alignItems: 'center'},
 });

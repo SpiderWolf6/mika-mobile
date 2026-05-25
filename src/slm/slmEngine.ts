@@ -5,9 +5,7 @@ import {PHI3_MODEL_PATH} from '../config';
 let llamaCtx: LlamaContext | null = null;
 
 export async function initSLM(): Promise<void> {
-  if (llamaCtx) {
-    return;
-  }
+  if (llamaCtx) { return; }
   llamaCtx = await initLlama({
     model: PHI3_MODEL_PATH,
     use_mlock: false,
@@ -24,23 +22,23 @@ export async function releaseSLM(): Promise<void> {
 }
 
 export async function classifyIntent(transcription: string): Promise<Intent> {
-  if (!llamaCtx) {
-    await initSLM();
-  }
+  if (!llamaCtx) { await initSLM(); }
 
-  const prompt = `Classify the user request. Today: ${new Date().toISOString()}.
-Output ONLY a single JSON object, nothing else.
-Types: calendar, reminder, alarm, unknown
-calendar payload: {action:"create"|"edit"|"delete"|"list", title?, startDate?, endDate?}
-reminder payload: {action:"create"|"edit"|"delete"|"list", title?, dueDate?}
-alarm payload: {action:"create"|"cancel"|"snooze"|"list", label?, isoTime?}
-Dates must be ISO8601.
-Example: {"type":"alarm","confidence":0.95,"payload":{"action":"create","label":"Wake up","isoTime":"2026-05-25T07:00:00.000Z"}}
-User request: ${transcription}
-JSON:`;
+  const now = new Date().toISOString();
+  const prompt =
+    `Classify the user request below into one of: calendar, reminder, alarm, unknown.\n` +
+    `Today: ${now}\n` +
+    `Output one JSON object only. No explanation. No extra text.\n` +
+    `Schema:\n` +
+    `{"type":"calendar","confidence":0.9,"payload":{"action":"create","title":"Meeting","startDate":"${now}","endDate":"${now}"}}\n` +
+    `{"type":"reminder","confidence":0.9,"payload":{"action":"create","title":"Call mom","dueDate":"${now}"}}\n` +
+    `{"type":"alarm","confidence":0.9,"payload":{"action":"create","label":"Wake up","isoTime":"${now}"}}\n` +
+    `{"type":"unknown","confidence":0.9,"payload":{}}\n` +
+    `Request: "${transcription}"\n` +
+    `JSON:`;
 
   const result = await llamaCtx!.completion(
-    {prompt, stop: ['\n'], temperature: 0.1, n_predict: 150},
+    {prompt, stop: ['\n', 'Request:'], temperature: 0.1, n_predict: 150},
     () => {},
   );
 
@@ -60,38 +58,19 @@ export async function generateResponse(
   transcription: string,
   intentResult: string,
 ): Promise<string> {
-  if (!llamaCtx) {
-    await initSLM();
-  }
+  if (!llamaCtx) { await initSLM(); }
 
-  const actionLine = intentResult !== 'No action taken'
-    ? `Action done: ${intentResult}.`
-    : '';
-
-  // Use ### format instead of <|end|> tags to avoid stop token conflicts
-  const prompt = `### System
-You are MIKA, a concise voice assistant. Reply in 1-2 short sentences only. No lists, no markdown.
-Only handle calendar, reminders, and alarms. For anything else say you cannot do that yet.
-${actionLine}
-### User
-${transcription}
-### MIKA
-`;
+  const action = intentResult !== 'No action taken' ? ` Action done: ${intentResult}.` : '';
+  const prompt =
+    `You are MIKA, a voice assistant. Reply in 1-2 sentences only. No markdown, no lists.` +
+    `${action}\n` +
+    `User said: "${transcription}"\n` +
+    `MIKA reply:`;
 
   const result = await llamaCtx!.completion(
-    {prompt, stop: ['###', '\n\n'], temperature: 0.7, n_predict: 80},
+    {prompt, stop: ['\n', 'User said:'], temperature: 0.7, n_predict: 80},
     () => {},
   );
 
-  let text = result.text.trim();
-  // Strip any leaked markup
-  const cutAt = (marker: string) => {
-    const i = text.indexOf(marker);
-    if (i > 0) { text = text.slice(0, i).trim(); }
-  };
-  cutAt('###');
-  cutAt('<|');
-  cutAt('User:');
-  cutAt('System:');
-  return text;
+  return result.text.trim();
 }
