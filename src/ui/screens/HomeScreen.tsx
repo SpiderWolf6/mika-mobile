@@ -147,7 +147,6 @@ export function HomeScreen() {
       setCurrentTranscription('');
 
       setStage('speaking');
-      Tts.stop();
       Tts.speak(response);
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
