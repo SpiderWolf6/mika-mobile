@@ -10,7 +10,7 @@ export async function getSharedCtx(): Promise<LlamaContext> {
     model: PHI3_MODEL_PATH,
     use_mlock: false,
     use_mmap: true,
-    n_ctx: 768,
+    n_ctx: 1024,
     n_threads: 4,
     n_gpu_layers: 99,
   });

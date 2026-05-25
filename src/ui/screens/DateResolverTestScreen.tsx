@@ -9,7 +9,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import {resolveDateTime} from '../../slm/dateResolver';
+import {resolveDateTime, localISOString} from '../../slm/dateResolver';
 
 export function DateResolverTestScreen() {
   const [query, setQuery] = useState('');
@@ -21,7 +21,7 @@ export function DateResolverTestScreen() {
     setLoading(true);
     setResult(null);
     try {
-      const nowISO = new Date().toISOString();
+      const nowISO = localISOString(new Date());
       const out = await resolveDateTime(query.trim(), nowISO);
       setResult(out);
     } finally {
@@ -32,7 +32,7 @@ export function DateResolverTestScreen() {
   return (
     <SafeAreaView style={s.container}>
       <Text style={s.title}>Date Resolver Test</Text>
-      <Text style={s.sub}>Now: {new Date().toISOString()}</Text>
+      <Text style={s.sub}>Now (local): {localISOString(new Date())}</Text>
 
       <TextInput
         style={s.input}
