@@ -6,6 +6,7 @@ import {
   Text,
   Alert,
   Platform,
+  NativeModules,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import Tts from 'react-native-tts';
@@ -41,12 +42,14 @@ export function HomeScreen() {
       try {
         await Tts.getInitStatus();
         Tts.setDucking(true);
+        Tts.addEventListener('tts-finish', () => setStage('idle'));
+        Tts.addEventListener('tts-cancel', () => setStage('idle'));
       } catch (e: any) {
-        if (e?.code !== 'no_engine') { throw e; }
-        await Tts.requestInstallEngine();
+        if (e?.code === 'no_engine') {
+          await Tts.requestInstallEngine();
+        }
+        console.warn('TTS init failed:', e);
       }
-      Tts.addEventListener('tts-finish', () => setStage('idle'));
-      Tts.addEventListener('tts-cancel', () => setStage('idle'));
 
       initAlarmListeners();
 
@@ -82,7 +85,10 @@ export function HomeScreen() {
 
   const startRecording = useCallback(async () => {
     if (!micPermissionRef.current) {
-      Alert.alert('Microphone Required', 'Enable microphone access in Settings.');
+      Alert.alert(
+        'Microphone Access Required',
+        'MIKA needs microphone access to hear your voice commands. Please enable it in Settings.',
+      );
       return;
     }
     try {
@@ -92,12 +98,14 @@ export function HomeScreen() {
       setActiveIntent(null);
       setConnectorStatus(null);
     } catch (err) {
-      Alert.alert('Recording Error', err instanceof Error ? err.message : String(err));
+      Alert.alert('Recording Error', err instanceof Error ? err.message : JSON.stringify(err));
     }
   }, []);
 
   const stopRecordingAndProcess = useCallback(async () => {
-    if (stage !== 'recording') { return; }
+    if (stage !== 'recording') {
+      return;
+    }
 
     try {
       const audioPath = await AudioRecord.stop();
@@ -112,7 +120,11 @@ export function HomeScreen() {
       setStage('transcribing');
       const transcription = await transcribeAudio(audioPath);
       setCurrentTranscription(transcription);
-      if (!transcription) { setStage('idle'); return; }
+
+      if (!transcription) {
+        setStage('idle');
+        return;
+      }
 
       setStage('thinking');
       const intent = await classifyIntent(transcription);
@@ -142,10 +154,19 @@ export function HomeScreen() {
       setCurrentTranscription('');
 
       setStage('speaking');
-      Tts.speak(response);
-      // stage returns to idle via tts-finish listener
+      try {
+        if (Platform.OS === 'ios' && NativeModules.RNAudioRecord) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        Tts.stop();
+        Tts.speak(response);
+      } catch (e) {
+        console.warn('TTS speak failed:', e);
+        setStage('idle');
+      }
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
+      Alert.alert('Error', msg);
       setStage('idle');
       AudioRecord.init({
         sampleRate: 16000,
@@ -155,6 +176,9 @@ export function HomeScreen() {
       });
     }
   }, [stage]);
+
+  const isRecording = stage === 'recording';
+  const isProcessing = ['transcribing', 'thinking', 'speaking'].includes(stage);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -167,8 +191,8 @@ export function HomeScreen() {
       <MikaStatusBar intent={activeIntent} connectorStatus={connectorStatus} />
       <View style={styles.recordRow}>
         <RecordButton
-          isRecording={stage === 'recording'}
-          isProcessing={['transcribing', 'thinking', 'speaking'].includes(stage)}
+          isRecording={isRecording}
+          isProcessing={isProcessing}
           onPressIn={startRecording}
           onPressOut={stopRecordingAndProcess}
         />
@@ -178,7 +202,22 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#1A1A1E', alignItems: 'center'},
-  title: {fontSize: 28, fontWeight: '700', color: '#fff', letterSpacing: 6, marginTop: 12, marginBottom: 8},
-  recordRow: {paddingBottom: 40, paddingTop: 16, alignItems: 'center'},
+  container: {
+    flex: 1,
+    backgroundColor: '#1A1A1E',
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 6,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  recordRow: {
+    paddingBottom: 40,
+    paddingTop: 16,
+    alignItems: 'center',
+  },
 });
