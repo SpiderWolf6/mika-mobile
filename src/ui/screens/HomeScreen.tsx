@@ -6,7 +6,6 @@ import {
   Text,
   Alert,
   Platform,
-  NativeModules,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import Tts from 'react-native-tts';
@@ -36,6 +35,7 @@ export function HomeScreen() {
       try {
         await Tts.getInitStatus();
         Tts.setDucking(true);
+        Tts.setIgnoreSilentSwitch('ignore');
         Tts.addEventListener('tts-finish', () => setStage('idle'));
         Tts.addEventListener('tts-cancel', () => setStage('idle'));
       } catch (e: any) {
@@ -147,16 +147,8 @@ export function HomeScreen() {
       setCurrentTranscription('');
 
       setStage('speaking');
-      try {
-        if (Platform.OS === 'ios' && NativeModules.RNAudioRecord) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-        Tts.stop();
-        Tts.speak(response);
-      } catch (e) {
-        console.warn('TTS speak failed:', e);
-        setStage('idle');
-      }
+      Tts.stop();
+      Tts.speak(response);
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
       Alert.alert('Error', msg);
