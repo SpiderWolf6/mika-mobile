@@ -28,22 +28,19 @@ export async function classifyIntent(transcription: string): Promise<Intent> {
     await initSLM();
   }
 
-  const prompt = `You are MIKA. Classify this request into ONE intent. Today: ${new Date().toISOString()}.
-
-INTENTS: calendar, reminder, alarm, unknown
-- calendar: {action:"create"|"edit"|"delete"|"list", title?, startDate?(ISO8601), endDate?(ISO8601)}
-- reminder: {action:"create"|"edit"|"delete"|"list", title?, dueDate?(ISO8601)}
-- alarm:    {action:"create"|"cancel"|"snooze"|"list", label?, isoTime?(ISO8601)}
-- unknown:  {}
-
-Respond ONLY with JSON. Example:
-{"type":"alarm","confidence":0.95,"payload":{"action":"create","label":"Wake up","isoTime":"2026-05-25T07:00:00.000Z"}}
-
-User: ${transcription}
+  const prompt = `Classify the user request. Today: ${new Date().toISOString()}.
+Output ONLY a single JSON object, nothing else.
+Types: calendar, reminder, alarm, unknown
+calendar payload: {action:"create"|"edit"|"delete"|"list", title?, startDate?, endDate?}
+reminder payload: {action:"create"|"edit"|"delete"|"list", title?, dueDate?}
+alarm payload: {action:"create"|"cancel"|"snooze"|"list", label?, isoTime?}
+Dates must be ISO8601.
+Example: {"type":"alarm","confidence":0.95,"payload":{"action":"create","label":"Wake up","isoTime":"2026-05-25T07:00:00.000Z"}}
+User request: ${transcription}
 JSON:`;
 
   const result = await llamaCtx!.completion(
-    {prompt, stop: ['\n', 'User:'], temperature: 0.1, n_predict: 200},
+    {prompt, stop: ['\n'], temperature: 0.1, n_predict: 150},
     () => {},
   );
 
@@ -68,26 +65,33 @@ export async function generateResponse(
   }
 
   const actionLine = intentResult !== 'No action taken'
-    ? `You just completed this action: ${intentResult}.`
+    ? `Action done: ${intentResult}.`
     : '';
 
-  const prompt = `<|system|>
-You are MIKA, a concise voice assistant. Reply in 1-2 short sentences.
-Only handle calendar, reminders, and alarms. For anything else say you can't do that yet.
-${actionLine}<|end|>
-<|user|>${transcription}<|end|>
-<|assistant|>`;
+  // Use ### format instead of <|end|> tags to avoid stop token conflicts
+  const prompt = `### System
+You are MIKA, a concise voice assistant. Reply in 1-2 short sentences only. No lists, no markdown.
+Only handle calendar, reminders, and alarms. For anything else say you cannot do that yet.
+${actionLine}
+### User
+${transcription}
+### MIKA
+`;
 
   const result = await llamaCtx!.completion(
-    {prompt, stop: ['<|end|>', '<|user|>', '<|system|>'], temperature: 0.7, n_predict: 100},
+    {prompt, stop: ['###', '\n\n'], temperature: 0.7, n_predict: 80},
     () => {},
   );
 
   let text = result.text.trim();
-  // Truncate any prompt leakage
-  for (const marker of ['<|', '<|user|>', '<|system|>']) {
-    const idx = text.indexOf(marker);
-    if (idx > 0) { text = text.slice(0, idx).trim(); }
-  }
+  // Strip any leaked markup
+  const cutAt = (marker: string) => {
+    const i = text.indexOf(marker);
+    if (i > 0) { text = text.slice(0, i).trim(); }
+  };
+  cutAt('###');
+  cutAt('<|');
+  cutAt('User:');
+  cutAt('System:');
   return text;
 }

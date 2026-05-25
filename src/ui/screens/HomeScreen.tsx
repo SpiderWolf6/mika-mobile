@@ -8,6 +8,7 @@ import {
   Platform,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
+import RNFS from 'react-native-fs';
 import Tts from 'react-native-tts';
 
 import {RecordButton} from '../components/RecordButton';
@@ -31,6 +32,7 @@ export function HomeScreen() {
   const [connectorStatus, setConnectorStatus] = useState<string | null>(null);
 
   const micPermissionRef = useRef<boolean>(false);
+  const recorderReadyRef = useRef<boolean>(false);
 
   useEffect(() => {
     (async () => {
@@ -79,6 +81,7 @@ export function HomeScreen() {
         bitsPerSample: 16,
         wavFile: 'mika_recording.wav',
       });
+      recorderReadyRef.current = true;
     })();
 
     return () => {
@@ -93,6 +96,10 @@ export function HomeScreen() {
         'Microphone Access Required',
         'MIKA needs microphone access to hear your voice commands. Please enable it in Settings.',
       );
+      return;
+    }
+    if (!recorderReadyRef.current) {
+      Alert.alert('Not ready', 'Recorder is still initializing, try again.');
       return;
     }
     try {
@@ -112,20 +119,30 @@ export function HomeScreen() {
     }
 
     try {
-      // Step 1 — stop recording
-      const audioPath = await AudioRecord.stop();
+      // Step 1 — stop recording and wait for WAV to be fully flushed
+      recorderReadyRef.current = false;
+      await AudioRecord.stop();
 
-      // Reinit so next recording works cleanly
+      // Poll until file has real data (WAV header alone is 44 bytes)
+      const wavPath = `${RNFS.CachesDirectoryPath}/mika_recording.wav`;
+      for (let i = 0; i < 20; i++) {
+        const info = await RNFS.stat(wavPath).catch(() => null);
+        if (info && info.size > 1000) { break; }
+        await new Promise(r => setTimeout(r, 150));
+      }
+
+      // Reinit ready for next recording
       AudioRecord.init({
         sampleRate: 16000,
         channels: 1,
         bitsPerSample: 16,
         wavFile: 'mika_recording.wav',
       });
+      recorderReadyRef.current = true;
 
       // Step 2 — transcribe
       setStage('transcribing');
-      const transcription = await transcribeAudio(audioPath);
+      const transcription = await transcribeAudio(wavPath);
       setCurrentTranscription(transcription);
 
       if (!transcription) {
@@ -179,13 +196,15 @@ export function HomeScreen() {
       const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
       Alert.alert('Error', msg);
       setStage('idle');
-      // Reinit so button works on next attempt
-      AudioRecord.init({
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        wavFile: 'mika_recording.wav',
-      });
+      if (!recorderReadyRef.current) {
+        AudioRecord.init({
+          sampleRate: 16000,
+          channels: 1,
+          bitsPerSample: 16,
+          wavFile: 'mika_recording.wav',
+        });
+        recorderReadyRef.current = true;
+      }
     }
   }, [stage]);
 
