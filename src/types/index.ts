@@ -37,11 +37,6 @@ export interface ConnectorResult {
   error?: string;
 }
 
-export interface SLMContext {
-  wikiSnippets: string[];
-  recentTurns: ConversationTurn[];
-}
-
 // Stored alarm tracked internally by the app
 export interface AlarmRecord {
   id: string;

@@ -16,10 +16,15 @@ if (src.includes(marker)) {
   process.exit(0);
 }
 
-src = src.replace(
-  'AudioFileClose(_recordState.mAudioFile);\n    }',
-  'AudioFileClose(_recordState.mAudioFile);\n        [[AVAudioSession sharedInstance] setActive:NO\n            withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation\n            error:nil];\n    }'
-);
+// Find AudioFileClose line and insert session deactivation after it
+const closeCall = 'AudioFileClose(_recordState.mAudioFile);';
+if (!src.includes(closeCall)) {
+  console.error('fix-audio-record: could not find patch location, skipping');
+  process.exit(0);
+}
+
+const insertion = `\n        [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];`;
+src = src.replace(closeCall, closeCall + insertion);
 
 fs.writeFileSync(file, src, 'utf8');
 console.log('fix-audio-record: patch applied successfully');

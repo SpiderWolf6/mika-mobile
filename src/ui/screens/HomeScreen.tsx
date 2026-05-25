@@ -6,7 +6,6 @@ import {
   Text,
   Alert,
   Platform,
-  NativeModules,
 } from 'react-native';
 import AudioRecord from 'react-native-audio-record';
 import Tts from 'react-native-tts';
@@ -16,10 +15,10 @@ import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
 import {MikaStatusBar} from '../components/StatusBar';
 
 import {transcribeAudio} from '../../slm/whisperEngine';
-import {classifyIntent, generateResponse, extractWikiFacts} from '../../slm/slmEngine';
+import {classifyIntent, generateResponse} from '../../slm/slmEngine';
 import {routeIntent} from '../../connectors';
 import {initAlarmListeners} from '../../connectors/alarmConnector';
-import {getRelevantWikiContext, appendWikiFile, ensureWikiDir} from '../../wiki/wikiManager';
+import {ensureWikiDir} from '../../wiki/wikiManager';
 import {loadHistory, appendTurn} from '../../utils/conversationStore';
 
 import {ConversationTurn, IntentType, ProcessingStage} from '../../types';
@@ -136,11 +135,7 @@ export function HomeScreen() {
 
       // Step 3 — SLM classify + act
       setStage('thinking');
-      const history = await loadHistory();
-      const wikiSnippets = await getRelevantWikiContext(transcription);
-      const slmContext = {wikiSnippets, recentTurns: history};
-
-      const intent = await classifyIntent(transcription, slmContext);
+      const intent = await classifyIntent(transcription);
       setActiveIntent(intent.type);
 
       let connectorSummary = 'No action taken';
@@ -153,15 +148,13 @@ export function HomeScreen() {
         setConnectorStatus(connectorSummary);
       }
 
-      const response = await generateResponse(transcription, connectorSummary, slmContext);
+      const response = await generateResponse(transcription, connectorSummary);
 
       // Step 4 — speak response
       // On iOS, deactivate the record audio session so TTS can take over
       setStage('speaking');
       try {
-        if (Platform.OS === 'ios' && NativeModules.RNAudioRecord) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
+        await new Promise(resolve => setTimeout(resolve, 800));
         Tts.stop();
         Tts.speak(response);
       } catch (e) {
@@ -169,14 +162,7 @@ export function HomeScreen() {
         setStage('idle');
       }
 
-      // Step 5 — save facts to wiki
-      const facts = await extractWikiFacts(transcription, response);
-      if (facts) {
-        const today = new Date().toISOString().split('T')[0];
-        await appendWikiFile('about-me.md', `\n## ${today}\n${facts}`);
-      }
-
-      // Step 6 — persist turn and update UI
+      // Step 5 — persist turn and update UI
       const turn: ConversationTurn = {
         id: `${Date.now()}`,
         timestamp: Date.now(),
