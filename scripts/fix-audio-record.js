@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 
 // Fix 1: react-native-audio-record — deactivate AVAudioSession on stop
-// so TTS can take over the audio session immediately after recording ends
 const audioRecordFile = path.join(
   __dirname,
   '../node_modules/react-native-audio-record/ios/RNAudioRecord.m',
@@ -29,8 +28,7 @@ if (fs.existsSync(audioRecordFile)) {
   }
 }
 
-// Fix 2: react-native-tts — force setActive:YES before speaking
-// so it can acquire the audio session even after recording left it active
+// Fix 2: react-native-tts — force AVAudioSessionCategoryPlayback before speaking
 const ttsFile = path.join(
   __dirname,
   '../node_modules/react-native-tts/ios/TextToSpeech/TextToSpeech.m',
@@ -42,27 +40,18 @@ if (fs.existsSync(ttsFile)) {
   if (src.includes(ttsMarker)) {
     console.log('fix-tts: already applied');
   } else {
-    const speakTarget = '- (void)speak:(NSString*)text';
-    if (src.includes(speakTarget)) {
+    // Target the AVSpeechUtterance allocation inside the speak method
+    const uttTarget = 'AVSpeechUtterance *utterance = [[AVSpeechUtterance alloc] initWithString:text];';
+    if (src.includes(uttTarget)) {
       src = src.replace(
-        speakTarget,
-        `- (void)speak:(NSString*)text {\n    /* mika-force-session */\n    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];\n    [[AVAudioSession sharedInstance] setActive:YES error:nil];\n}\n- (void)speak_orig:(NSString*)text`,
+        uttTarget,
+        `/* mika-force-session */\n    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];\n    [[AVAudioSession sharedInstance] setActive:YES error:nil];\n    AVSpeechUtterance *utterance = [[AVSpeechUtterance alloc] initWithString:text];`,
       );
-      // That approach would break the method — use a simpler insertion instead
-      // Revert and do a clean insertion before the utterance creation
-      src = fs.readFileSync(ttsFile, 'utf8');
-      // Find the line where AVSpeechUtterance is created and insert before it
-      const uttTarget = 'AVSpeechUtterance *utterance';
-      if (src.includes(uttTarget)) {
-        src = src.replace(
-          uttTarget,
-          `/* mika-force-session */\n    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];\n    [[AVAudioSession sharedInstance] setActive:YES error:nil];\n    AVSpeechUtterance *utterance`,
-        );
-        fs.writeFileSync(ttsFile, src, 'utf8');
-        console.log('fix-tts: patch applied');
-      } else {
-        console.error('fix-tts: patch location not found');
-      }
+      fs.writeFileSync(ttsFile, src, 'utf8');
+      console.log('fix-tts: patch applied');
+    } else {
+      console.error('fix-tts: patch location not found — dumping first 50 lines for debug:');
+      console.error(src.split('\n').slice(0, 50).join('\n'));
     }
   }
 }
