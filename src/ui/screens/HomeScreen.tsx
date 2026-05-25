@@ -29,6 +29,7 @@ export function HomeScreen() {
   const [connectorStatus, setConnectorStatus] = useState<string | null>(null);
 
   const micPermissionRef = useRef<boolean>(false);
+  const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     (async () => {
@@ -36,8 +37,8 @@ export function HomeScreen() {
         await Tts.getInitStatus();
         Tts.setDucking(true);
         Tts.setIgnoreSilentSwitch('ignore');
-        Tts.addEventListener('tts-finish', () => setStage('idle'));
-        Tts.addEventListener('tts-cancel', () => setStage('idle'));
+        Tts.addEventListener('tts-finish', () => { clearTimeout(ttsTimeoutRef.current); setStage('idle'); });
+        Tts.addEventListener('tts-cancel', () => { clearTimeout(ttsTimeoutRef.current); setStage('idle'); });
       } catch (e: any) {
         if (e?.code === 'no_engine') {
           await Tts.requestInstallEngine();
@@ -148,6 +149,9 @@ export function HomeScreen() {
 
       setStage('speaking');
       Tts.speak(response);
+      const wordCount = response.split(' ').length;
+      const ms = Math.max(4000, wordCount * 400);
+      ttsTimeoutRef.current = setTimeout(() => setStage(s => s === 'speaking' ? 'idle' : s), ms);
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
       Alert.alert('Error', msg);
