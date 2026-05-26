@@ -4,21 +4,28 @@ import {
   StyleSheet,
   View,
   Text,
-  Alert,
+  TouchableOpacity,
+  Pressable,
+  Dimensions,
 } from 'react-native';
 import Voice from '@react-native-voice/voice';
 import Tts from 'react-native-tts';
 
-import {RecordButton} from '../components/RecordButton';
-import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
+import {MikaOrb} from '../components/MikaOrb';
+import {FloatingText} from '../components/FloatingText';
+import {VoiceSettings} from '../components/VoiceSettings';
 
 import {chat} from '../../slm/slmEngine';
-import {ConversationTurn, ProcessingStage} from '../../types';
+import {ProcessingStage} from '../../types';
+
+const {height} = Dimensions.get('window');
 
 export function HomeScreen() {
   const [stage, setStage] = useState<ProcessingStage>('idle');
-  const [currentTranscription, setCurrentTranscription] = useState('');
-  const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  const [liveText, setLiveText] = useState('');
+  const [replyText, setReplyText] = useState('');
+  const [suckedIn, setSuckedIn] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const stageRef = useRef<ProcessingStage>('idle');
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -35,9 +42,7 @@ export function HomeScreen() {
       const text = e.value?.[0] ?? '';
       if (text) {
         bestResultRef.current = text;
-        if (stageRef.current === 'recording') {
-          setCurrentTranscription(text);
-        }
+        if (stageRef.current === 'recording') { setLiveText(text); }
       }
     };
     Voice.onSpeechError = () => {};
@@ -58,6 +63,7 @@ export function HomeScreen() {
       clearTimeout(ttsTimeoutRef.current);
       setStageSync('idle');
     });
+
     return () => {
       Voice.destroy().catch(() => {});
       clearTimeout(ttsTimeoutRef.current);
@@ -68,27 +74,26 @@ export function HomeScreen() {
   }, []);
 
   const processText = useCallback(async (text: string) => {
-    if (!text.trim()) { setStageSync('idle'); return; }
-    setCurrentTranscription(text);
+    if (!text.trim()) { setStageSync('idle'); setLiveText(''); return; }
+
+    // Suck the text into the orb
+    setSuckedIn(true);
+    setTimeout(() => { setLiveText(''); setSuckedIn(false); }, 700);
+
     setStageSync('thinking');
     try {
       const reply = await chat(text);
-      setTurns(prev => [...prev, {
-        id: `${Date.now()}`,
-        timestamp: Date.now(),
-        userInput: text,
-        transcription: text,
-        response: reply,
-      } as ConversationTurn]);
-      setCurrentTranscription('');
+      setReplyText(reply);
       setStageSync('speaking');
       Tts.speak(reply);
       const ms = Math.max(4000, reply.split(' ').length * 400);
       ttsTimeoutRef.current = setTimeout(() => {
-        if (stageRef.current === 'speaking') { setStageSync('idle'); }
+        if (stageRef.current === 'speaking') {
+          setStageSync('idle');
+          setTimeout(() => setReplyText(''), 800);
+        }
       }, ms);
-    } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : String(err));
+    } catch {
       setStageSync('idle');
     }
   }, []);
@@ -98,10 +103,11 @@ export function HomeScreen() {
     try {
       await Voice.destroy();
       bestResultRef.current = '';
+      setLiveText('');
+      setReplyText('');
       setStageSync('recording');
       await Voice.start('en-US');
-    } catch (err) {
-      Alert.alert('Microphone Error', err instanceof Error ? err.message : String(err));
+    } catch {
       setStageSync('idle');
     }
   }, []);
@@ -109,9 +115,7 @@ export function HomeScreen() {
   const stopRecordingAndProcess = useCallback(async () => {
     if (stageRef.current !== 'recording') { return; }
     setStageSync('transcribing');
-
     try { await Voice.stop(); } catch (_) {}
-
     flushTimeoutRef.current = setTimeout(() => {
       const text = bestResultRef.current;
       bestResultRef.current = '';
@@ -120,28 +124,162 @@ export function HomeScreen() {
     }, 800);
   }, [processText]);
 
+  const stageLabel =
+    stage === 'recording'    ? 'Listening' :
+    stage === 'transcribing' ? 'Processing' :
+    stage === 'thinking'     ? 'Thinking' :
+    stage === 'speaking'     ? 'Speaking' : '';
+
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>MIKA</Text>
-      <TranscriptionDisplay
-        stage={stage}
-        currentTranscription={currentTranscription}
-        turns={turns}
-      />
-      <View style={styles.recordRow}>
-        <RecordButton
-          isRecording={stage === 'recording'}
-          isProcessing={['transcribing', 'thinking', 'speaking'].includes(stage)}
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>MIKA</Text>
+        <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
+          <Text style={styles.settingsIcon}>◈</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Orb area */}
+      <View style={styles.orbArea}>
+        <MikaOrb stage={stage} />
+
+        {/* Live transcription drifts up from orb */}
+        <View style={styles.floatAbove} pointerEvents="none">
+          <FloatingText
+            text={liveText}
+            visible={!!liveText && (stage === 'recording' || stage === 'transcribing')}
+            suckedIn={suckedIn}
+          />
+        </View>
+
+        {/* Reply text appears below orb */}
+        <View style={styles.floatBelow} pointerEvents="none">
+          <FloatingText
+            text={replyText}
+            visible={!!replyText && stage === 'speaking'}
+          />
+        </View>
+      </View>
+
+      {/* Stage label */}
+      <View style={styles.labelRow}>
+        <Text style={styles.stageLabel}>{stageLabel}</Text>
+      </View>
+
+      {/* Hold-to-speak button */}
+      <View style={styles.buttonArea}>
+        <Pressable
           onPressIn={startRecording}
           onPressOut={stopRecordingAndProcess}
-        />
+          style={({pressed}) => [
+            styles.holdButton,
+            pressed && styles.holdButtonActive,
+            stage === 'recording' && styles.holdButtonRecording,
+            ['transcribing','thinking','speaking'].includes(stage) && styles.holdButtonDisabled,
+          ]}
+          disabled={['transcribing','thinking','speaking'].includes(stage)}>
+          <Text style={styles.holdButtonText}>
+            {stage === 'recording' ? 'Release' : 'Hold to speak'}
+          </Text>
+        </Pressable>
       </View>
+
+      <VoiceSettings visible={showSettings} onClose={() => setShowSettings(false)} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#1A1A1E', alignItems: 'center'},
-  title: {fontSize: 28, fontWeight: '700', color: '#fff', letterSpacing: 6, marginTop: 12, marginBottom: 8},
-  recordRow: {paddingBottom: 40, paddingTop: 16, alignItems: 'center'},
+  container: {
+    flex: 1,
+    backgroundColor: '#08080f',
+    alignItems: 'center',
+  },
+  header: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  title: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.3)',
+    letterSpacing: 10,
+    textTransform: 'uppercase',
+  },
+  settingsBtn: {
+    position: 'absolute',
+    right: 24,
+    padding: 4,
+  },
+  settingsIcon: {
+    fontSize: 20,
+    color: 'rgba(255,255,255,0.25)',
+  },
+  orbArea: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  floatAbove: {
+    position: 'absolute',
+    top: -60,
+    alignItems: 'center',
+    width: '100%',
+  },
+  floatBelow: {
+    position: 'absolute',
+    bottom: -80,
+    alignItems: 'center',
+    width: '100%',
+  },
+  labelRow: {
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  stageLabel: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.25)',
+    letterSpacing: 4,
+    textTransform: 'uppercase',
+  },
+  buttonArea: {
+    paddingBottom: 48,
+    paddingTop: 8,
+    alignItems: 'center',
+  },
+  holdButton: {
+    paddingHorizontal: 48,
+    paddingVertical: 18,
+    borderRadius: 50,
+    borderWidth: 1,
+    borderColor: 'rgba(99,102,241,0.4)',
+    backgroundColor: 'rgba(99,102,241,0.08)',
+  },
+  holdButtonActive: {
+    backgroundColor: 'rgba(99,102,241,0.18)',
+    borderColor: 'rgba(99,102,241,0.7)',
+  },
+  holdButtonRecording: {
+    borderColor: 'rgba(255,77,143,0.7)',
+    backgroundColor: 'rgba(255,77,143,0.12)',
+  },
+  holdButtonDisabled: {
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'transparent',
+  },
+  holdButtonText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    fontWeight: '500',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
 });
