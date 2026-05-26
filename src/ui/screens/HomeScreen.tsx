@@ -31,10 +31,14 @@ export function HomeScreen() {
   }
 
   useEffect(() => {
-    // Always keep updating bestResultRef as Voice fires partials
     Voice.onSpeechResults = e => {
       const text = e.value?.[0] ?? '';
-      if (text) { bestResultRef.current = text; }
+      if (text) {
+        bestResultRef.current = text;
+        if (stageRef.current === 'recording') {
+          setCurrentTranscription(text);
+        }
+      }
     };
     Voice.onSpeechError = () => {};
 
@@ -106,16 +110,14 @@ export function HomeScreen() {
     if (stageRef.current !== 'recording') { return; }
     setStageSync('transcribing');
 
-    // Stop Voice — this triggers one final onSpeechResults with the complete utterance
     try { await Voice.stop(); } catch (_) {}
 
-    // Wait 500ms for the final result to arrive after stop, then take best
     flushTimeoutRef.current = setTimeout(() => {
       const text = bestResultRef.current;
       bestResultRef.current = '';
       Voice.destroy().catch(() => {});
       processText(text);
-    }, 500);
+    }, 800);
   }, [processText]);
 
   return (
