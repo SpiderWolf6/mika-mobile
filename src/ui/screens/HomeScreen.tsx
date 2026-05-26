@@ -228,13 +228,13 @@ const styles = StyleSheet.create({
   },
   floatAbove: {
     position: 'absolute',
-    top: -60,
+    top: -120,
     alignItems: 'center',
     width: '100%',
   },
   floatBelow: {
     position: 'absolute',
-    bottom: -80,
+    bottom: -120,
     alignItems: 'center',
     width: '100%',
   },
