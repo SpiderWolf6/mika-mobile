@@ -12,64 +12,19 @@ import Tts from 'react-native-tts';
 
 import {RecordButton} from '../components/RecordButton';
 import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
-import {MikaStatusBar} from '../components/StatusBar';
 
 import {transcribeAudio} from '../../slm/whisperEngine';
-import {
-  runGatekeeper,
-  extractAlarmPayload,
-  extractReminderPayload,
-  extractCalendarPayload,
-} from '../../slm/slmEngine';
-import {routeIntent} from '../../connectors';
-import {initAlarmListeners} from '../../connectors/alarmConnector';
+import {chat} from '../../slm/slmEngine';
+import {ConversationTurn, ProcessingStage} from '../../types';
 
-import {ClarificationState, ConversationTurn, IntentType, ProcessingStage} from '../../types';
-
-function confirmationFor(
-  connector: 'alarm' | 'reminder' | 'calendar',
-  payload: Record<string, string>,
-): string {
-  const fmt = (iso: string) => {
-    try {
-      return new Date(iso).toLocaleString('en-US', {
-        weekday: 'long', month: 'short', day: 'numeric',
-        hour: 'numeric', minute: '2-digit',
-      });
-    } catch { return iso; }
-  };
-
-  const action = payload.action ?? 'create';
-  const label = payload.label ?? payload.title ?? 'that';
-
-  if (connector === 'alarm') {
-    if (action === 'cancel' || action === 'delete') { return `Done. Your ${label} alarm has been cancelled.`; }
-    return `Got it. Your alarm${payload.label ? ` for ${payload.label}` : ''} is set for ${fmt(payload.isoTime)}.`;
-  }
-  if (connector === 'reminder') {
-    if (action === 'delete') { return `Done. Your ${label} reminder has been removed.`; }
-    return `Done. I've set a reminder for ${payload.title ?? 'that'} on ${fmt(payload.dueDate)}.`;
-  }
-  // calendar
-  if (action === 'delete') { return `Done. ${label} has been removed from your calendar.`; }
-  if (action === 'edit') {
-    if (payload.newTitle) { return `Done. Renamed to ${payload.newTitle}.`; }
-    return `Done. ${label} has been updated${payload.startDate ? ` to ${fmt(payload.startDate)}` : ''}.`;
-  }
-  return `Done. ${payload.title ?? 'Your event'} has been added to your calendar on ${fmt(payload.startDate)}.`;
-}
 
 export function HomeScreen() {
   const [stage, setStage] = useState<ProcessingStage>('idle');
   const [currentTranscription, setCurrentTranscription] = useState('');
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
-  const [activeIntent, setActiveIntent] = useState<IntentType | null>(null);
-  const [connectorStatus, setConnectorStatus] = useState<string | null>(null);
 
   const micPermissionRef = useRef<boolean>(false);
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // In-memory only — cleared on restart, no persistence
-  const clarificationRef = useRef<ClarificationState | null>(null);
 
   const speak = useCallback((text: string) => {
     setStage('speaking');
@@ -99,8 +54,6 @@ export function HomeScreen() {
         if (e?.code === 'no_engine') { await Tts.requestInstallEngine(); }
         console.warn('TTS init failed:', e);
       }
-
-      initAlarmListeners();
 
       if (Platform.OS === 'android') {
         const {PermissionsAndroid} = require('react-native');
@@ -144,8 +97,6 @@ export function HomeScreen() {
       AudioRecord.start();
       setStage('recording');
       setCurrentTranscription('');
-      setActiveIntent(null);
-      setConnectorStatus(null);
     } catch (err) {
       Alert.alert('Recording Error', err instanceof Error ? err.message : JSON.stringify(err));
     }
@@ -169,68 +120,18 @@ export function HomeScreen() {
       if (!transcription) { setStage('idle'); return; }
 
       setStage('thinking');
-      const now = new Date().toISOString();
+      const reply = await chat(transcription);
 
-      // If we're mid-clarification, append new input to what we already know
-      const collectedInfo = clarificationRef.current
-        ? `${clarificationRef.current.collectedInfo} | Follow-up: ${transcription}`
-        : null;
-
-      // ── Agent 1: Gatekeeper ──
-      const gate = await runGatekeeper(transcription, collectedInfo, now);
-
-      if (gate.status === 'cannot_do') {
-        clarificationRef.current = null;
-        const reply = 'I don\'t have the ability to do that. I can set alarms, reminders, and calendar events.';
-        addTurn(transcription, {type: 'unknown', confidence: 1, payload: {}}, reply);
-        speak(reply);
-        return;
-      }
-
-      if (gate.status === 'cannot_answer') {
-        clarificationRef.current = null;
-        const reply = 'I cannot answer that. I can set alarms, reminders, and calendar events.';
-        addTurn(transcription, {type: 'unknown', confidence: 1, payload: {}}, reply);
-        speak(reply);
-        return;
-      }
-
-      if (gate.status === 'need_clarification') {
-        // Store what we know so far; next voice turn will append to it
-        clarificationRef.current = {
-          connector: gate.connector,
-          collectedInfo: gate.partialInfo,
-        };
-        addTurn(transcription, {type: 'unknown', confidence: 1, payload: {}}, gate.question);
-        speak(gate.question);
-        return;
-      }
-
-      // gate.status === 'ready' — run Agent 2
-      clarificationRef.current = null;
-      const {connector, summary} = gate;
-      setActiveIntent(connector);
-
-      let intent;
-      if (connector === 'alarm') {
-        intent = await extractAlarmPayload(summary, now);
-      } else if (connector === 'reminder') {
-        intent = await extractReminderPayload(summary, now);
-      } else {
-        intent = await extractCalendarPayload(summary, now);
-      }
-
-      const result = await routeIntent(intent);
-      setConnectorStatus(result.success ? `${connector}: done` : `${connector}: failed`);
-
-      const notFound = result.success && (result.data as any)?.notFound;
-      const response = !result.success
-        ? `Sorry, something went wrong. ${result.error ?? ''}`.trim()
-        : notFound
-          ? `I couldn't find ${intent.payload.title ?? 'that'} to ${intent.payload.action}.`
-          : confirmationFor(connector, intent.payload);
-      addTurn(transcription, intent, response);
-      speak(response);
+      const turn: ConversationTurn = {
+        id: `${Date.now()}`,
+        timestamp: Date.now(),
+        userInput: transcription,
+        transcription,
+        response: reply,
+      };
+      setTurns(prev => [...prev, turn]);
+      setCurrentTranscription('');
+      speak(reply);
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err, null, 2);
@@ -245,23 +146,6 @@ export function HomeScreen() {
     }
   }, [stage, speak]);
 
-  function addTurn(
-    transcription: string,
-    intent: ConversationTurn['intent'],
-    response: string,
-  ) {
-    const turn: ConversationTurn = {
-      id: `${Date.now()}`,
-      timestamp: Date.now(),
-      userInput: transcription,
-      transcription,
-      intent,
-      response,
-    };
-    setTurns(prev => [...prev, turn]);
-    setCurrentTranscription('');
-  }
-
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>MIKA</Text>
@@ -270,7 +154,6 @@ export function HomeScreen() {
         currentTranscription={currentTranscription}
         turns={turns}
       />
-      <MikaStatusBar intent={activeIntent} connectorStatus={connectorStatus} />
       <View style={styles.recordRow}>
         <RecordButton
           isRecording={stage === 'recording'}

@@ -66,6 +66,12 @@ yarn-error.log
 # testing
 /coverage
 
+# MIKA local dev
+.env
+opus/
+eval.js
+testbench.js
+
 # Yarn
 .yarn/*
 !.yarn/patches

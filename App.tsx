@@ -1,37 +1,15 @@
 import React, {useEffect, useState} from 'react';
 import {StatusBar, View, StyleSheet} from 'react-native';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
-import notifee, {AuthorizationStatus} from '@notifee/react-native';
 import {HomeScreen} from './src/ui/screens/HomeScreen';
 import {ModelDownloadScreen, areModelsReady} from './src/ui/screens/ModelDownloadScreen';
-import {DateResolverTestScreen} from './src/ui/screens/DateResolverTestScreen';
-
-const TEST_DATE_RESOLVER = true; // flip to true to test date resolver
 
 type AppState = 'checking' | 'downloading' | 'ready';
-
-async function requestNotifeePermissions() {
-  const settings = await notifee.requestPermission();
-  if (settings.authorizationStatus < AuthorizationStatus.AUTHORIZED) {
-    console.warn('Notification permission denied — alarms will not fire');
-  }
-  // Register iOS alarm category with Snooze + Dismiss actions
-  await notifee.setNotificationCategories([
-    {
-      id: 'alarm',
-      actions: [
-        {id: 'snooze', title: 'Snooze 5 min'},
-        {id: 'dismiss', title: 'Dismiss', destructive: true},
-      ],
-    },
-  ]);
-}
 
 function App() {
   const [appState, setAppState] = useState<AppState>('checking');
 
   useEffect(() => {
-    requestNotifeePermissions();
     areModelsReady().then(ready => {
       setAppState(ready ? 'ready' : 'downloading');
     });
@@ -44,7 +22,7 @@ function App() {
       {appState === 'downloading' && (
         <ModelDownloadScreen onReady={() => setAppState('ready')} />
       )}
-      {appState === 'ready' && (TEST_DATE_RESOLVER ? <DateResolverTestScreen /> : <HomeScreen />)}
+      {appState === 'ready' && <HomeScreen />}
     </SafeAreaProvider>
   );
 }
