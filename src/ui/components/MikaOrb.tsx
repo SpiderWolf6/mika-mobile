@@ -30,15 +30,15 @@ export function MikaOrb({stage}: Props) {
     a.start();
   }
 
-  function animateBars(minH: number, maxH: number, speed: number, stagger: number) {
+  function animateBars(minS: number, maxS: number, speed: number, stagger: number) {
     bars.forEach((bar, i) => {
       const delay = i * stagger;
       const loop = Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
           Animated.sequence([
-            Animated.timing(bar, {toValue: maxH, duration: speed, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-            Animated.timing(bar, {toValue: minH, duration: speed, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+            Animated.timing(bar, {toValue: maxS, duration: speed, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+            Animated.timing(bar, {toValue: minS, duration: speed, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
           ]),
         ]),
       );
@@ -148,7 +148,6 @@ export function MikaOrb({stage}: Props) {
             const angle = (i / NUM_BARS) * 2 * Math.PI;
             const x = Math.cos(angle) * RADIUS;
             const y = Math.sin(angle) * RADIUS;
-            const barHeight = barAnim.interpolate({inputRange:[0,1], outputRange:[6, 38]});
             return (
               <Animated.View
                 key={i}
@@ -157,11 +156,11 @@ export function MikaOrb({stage}: Props) {
                   {
                     backgroundColor: PRIMARY,
                     shadowColor: PRIMARY,
-                    height: barHeight,
                     transform: [
                       {translateX: x},
                       {translateY: y},
                       {rotate: `${(angle * 180) / Math.PI + 90}deg`},
+                      {scaleY: barAnim},
                     ],
                   },
                 ]}
@@ -238,6 +237,7 @@ const styles = StyleSheet.create({
   bar: {
     position: 'absolute',
     width: 3,
+    height: 28,
     borderRadius: 2,
     opacity: 0.85,
     shadowOffset: {width: 0, height: 0},
