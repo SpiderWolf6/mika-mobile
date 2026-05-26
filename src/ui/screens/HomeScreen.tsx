@@ -21,6 +21,7 @@ export function HomeScreen() {
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
 
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const transcribeTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const speak = useCallback((text: string) => {
     setStage('speaking');
@@ -33,7 +34,8 @@ export function HomeScreen() {
   }, []);
 
   const handleTranscript = useCallback(async (transcription: string) => {
-    if (!transcription) { setStage('idle'); return; }
+    clearTimeout(transcribeTimeoutRef.current);
+    if (!transcription?.trim()) { setStage('idle'); return; }
     setCurrentTranscription(transcription);
     setStage('thinking');
     try {
@@ -87,6 +89,7 @@ export function HomeScreen() {
 
     return () => {
       destroyVoice();
+      clearTimeout(transcribeTimeoutRef.current);
       Tts.removeAllListeners('tts-finish');
       Tts.removeAllListeners('tts-cancel');
     };
@@ -108,6 +111,8 @@ export function HomeScreen() {
     try {
       setStage('transcribing');
       await stopListening();
+      // If no speech result arrives within 3s, bail out
+      transcribeTimeoutRef.current = setTimeout(() => setStage('idle'), 3000);
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : String(err));
       setStage('idle');
