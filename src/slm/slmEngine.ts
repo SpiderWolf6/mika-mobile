@@ -9,8 +9,8 @@ export async function getSharedCtx(): Promise<LlamaContext> {
     model: PHI3_MODEL_PATH,
     use_mlock: false,
     use_mmap: true,
-    n_ctx: 1024,
-    n_threads: 4,
+    n_ctx: 512,
+    n_threads: 6,
     n_gpu_layers: 99,
   });
   return llamaCtx;
@@ -29,7 +29,7 @@ export async function chat(userMessage: string): Promise<string> {
     `<|assistant|>\n`;
 
   const result = await ctx.completion(
-    {prompt, stop: ['<|end|>', '<|user|>'], temperature: 0.7, n_predict: 120},
+    {prompt, stop: ['<|end|>', '<|user|>'], temperature: 0.7, n_predict: 60},
     () => {},
   );
   return result.text.trim();
