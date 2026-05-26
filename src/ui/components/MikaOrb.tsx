@@ -94,7 +94,8 @@ export function MikaOrb({stage}: Props) {
   const ringOpacity2 = ring2.interpolate({inputRange: [0, 0.6, 1], outputRange: [0.35, 0.08, 0]});
   const glowScale = glow.interpolate({inputRange: [0,1], outputRange: [0.9, 1.25]});
   const spinDeg = spin.interpolate({inputRange: [0,1], outputRange: ['0deg','360deg']});
-  const spinOpacity = (stage === 'thinking' || stage === 'transcribing') ? glow : new Animated.Value(0);
+  const isThinking = stage === 'thinking' || stage === 'transcribing';
+  const spinOpacity = spin.interpolate({inputRange: [0, 1], outputRange: [isThinking ? 0.6 : 0, isThinking ? 0.6 : 0]});
 
   return (
     <View style={styles.container}>
@@ -103,7 +104,7 @@ export function MikaOrb({stage}: Props) {
       <Animated.View style={[styles.ring, {borderColor: color, opacity: ringOpacity1, transform: [{scale: ringScale1}]}]} />
 
       {/* Glow blob */}
-      <Animated.View style={[styles.glow, {backgroundColor: color, opacity: Animated.multiply(glow, 0.18), transform: [{scale: glowScale}]}]} />
+      <Animated.View style={[styles.glow, {backgroundColor: color, opacity: glow.interpolate({inputRange:[0,1],outputRange:[0,0.18]}), transform: [{scale: glowScale}]}]} />
 
       {/* Spin dot for thinking */}
       <Animated.View style={[styles.spinWrap, {opacity: spinOpacity, transform: [{rotate: spinDeg}]}]}>
