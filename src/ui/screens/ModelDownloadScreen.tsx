@@ -8,20 +8,15 @@ import {
 } from 'react-native';
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {WHISPER_MODEL_PATH, PHI3_MODEL_PATH} from '../../config';
+import {QWEN_MODEL_PATH} from '../../config';
 
 const MODELS_READY_KEY = '@mika_models_ready';
 
 const DOWNLOADS = [
   {
-    label: 'Whisper (speech recognition)',
-    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
-    dest: WHISPER_MODEL_PATH,
-  },
-  {
-    label: 'Phi-3 mini (language model, ~2.3 GB)',
-    url: 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
-    dest: PHI3_MODEL_PATH,
+    label: 'Qwen 2.5 1.5B (language model, ~900 MB)',
+    url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
+    dest: QWEN_MODEL_PATH,
   },
 ];
 

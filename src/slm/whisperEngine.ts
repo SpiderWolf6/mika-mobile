@@ -1,31 +1,21 @@
-import {initWhisper, WhisperContext} from 'whisper.rn';
-import {WHISPER_MODEL_PATH} from '../config';
+import Voice from '@react-native-voice/voice';
 
-let whisperCtx: WhisperContext | null = null;
-
-export async function initWhisperEngine(): Promise<void> {
-  if (whisperCtx) {
-    return;
-  }
-  whisperCtx = await initWhisper({filePath: WHISPER_MODEL_PATH});
+export function initVoice(onResult: (text: string) => void, onError: (e: any) => void) {
+  Voice.onSpeechResults = e => {
+    const text = e.value?.[0] ?? '';
+    if (text) { onResult(text); }
+  };
+  Voice.onSpeechError = e => onError(e);
 }
 
-export async function transcribeAudio(audioFilePath: string): Promise<string> {
-  if (!whisperCtx) {
-    await initWhisperEngine();
-  }
-
-  const {promise} = whisperCtx!.transcribe(audioFilePath, {
-    language: 'en',
-    maxLen: 1,
-    tokenTimestamps: false,
-  });
-
-  const result = await promise;
-  return result.result.trim();
+export async function startListening() {
+  await Voice.start('en-US');
 }
 
-export function releaseWhisper(): void {
-  whisperCtx?.release();
-  whisperCtx = null;
+export async function stopListening(): Promise<void> {
+  await Voice.stop();
+}
+
+export function destroyVoice() {
+  Voice.destroy().then(Voice.removeAllListeners);
 }

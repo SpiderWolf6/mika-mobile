@@ -34,6 +34,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MIKA needs microphone access to hear your voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>MIKA uses speech recognition to understand what you say.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>UILaunchStoryboardName</key>
