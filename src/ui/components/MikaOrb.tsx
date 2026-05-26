@@ -29,12 +29,12 @@ export function MikaOrb({stage}: Props) {
 
     if (stage === 'idle') {
       pulseAnim.current = Animated.loop(Animated.sequence([
-        Animated.timing(pulse, {toValue: 1.04, duration: 2800, easing: Easing.inOut(Easing.sine), useNativeDriver: true}),
-        Animated.timing(pulse, {toValue: 1.0,  duration: 2800, easing: Easing.inOut(Easing.sine), useNativeDriver: true}),
+        Animated.timing(pulse, {toValue: 1.04, duration: 2800, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+        Animated.timing(pulse, {toValue: 1.0,  duration: 2800, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
       ]));
       glowAnim.current = Animated.loop(Animated.sequence([
-        Animated.timing(glow, {toValue: 0.65, duration: 2800, easing: Easing.inOut(Easing.sine), useNativeDriver: true}),
-        Animated.timing(glow, {toValue: 0.25, duration: 2800, easing: Easing.inOut(Easing.sine), useNativeDriver: true}),
+        Animated.timing(glow, {toValue: 0.65, duration: 2800, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+        Animated.timing(glow, {toValue: 0.25, duration: 2800, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
       ]));
     }
 
@@ -53,8 +53,8 @@ export function MikaOrb({stage}: Props) {
 
     if (stage === 'transcribing' || stage === 'thinking') {
       pulseAnim.current = Animated.loop(Animated.sequence([
-        Animated.timing(pulse, {toValue: 1.08, duration: 550, easing: Easing.inOut(Easing.sine), useNativeDriver: true}),
-        Animated.timing(pulse, {toValue: 0.96, duration: 550, easing: Easing.inOut(Easing.sine), useNativeDriver: true}),
+        Animated.timing(pulse, {toValue: 1.08, duration: 550, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+        Animated.timing(pulse, {toValue: 0.96, duration: 550, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
       ]));
       glowAnim.current = Animated.loop(Animated.sequence([
         Animated.timing(glow, {toValue: 0.9, duration: 380, useNativeDriver: true}),
