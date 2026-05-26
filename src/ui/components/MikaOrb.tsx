@@ -2,158 +2,180 @@ import React, {useEffect, useRef} from 'react';
 import {Animated, Easing, StyleSheet, View} from 'react-native';
 import {ProcessingStage} from '../../types';
 
-const ORB = 160;
+const ORB = 140;
+const NUM_BARS = 12;
 
 interface Props {
   stage: ProcessingStage;
 }
 
 export function MikaOrb({stage}: Props) {
-  const scale      = useRef(new Animated.Value(1)).current;
-  const innerScale = useRef(new Animated.Value(0.72)).current;
-  const coreOpacity= useRef(new Animated.Value(0.7)).current;
-  const ring1      = useRef(new Animated.Value(0)).current;
-  const ring2      = useRef(new Animated.Value(0)).current;
-  const ring3      = useRef(new Animated.Value(0)).current;
-  const scanLine   = useRef(new Animated.Value(0)).current;
-  const hexRot     = useRef(new Animated.Value(0)).current;
-
-  const anims = useRef<Animated.CompositeAnimation[]>([]);
+  // Each bar has its own height animation
+  const bars = useRef(Array.from({length: NUM_BARS}, () => new Animated.Value(0.3))).current;
+  const outerRot  = useRef(new Animated.Value(0)).current;
+  const innerRot  = useRef(new Animated.Value(0)).current;
+  const orbScale  = useRef(new Animated.Value(1)).current;
+  const coreGlow  = useRef(new Animated.Value(0.5)).current;
+  const ring1     = useRef(new Animated.Value(0)).current;
+  const ring2     = useRef(new Animated.Value(0)).current;
+  const anims     = useRef<Animated.CompositeAnimation[]>([]);
 
   function stopAll() {
     anims.current.forEach(a => a.stop());
     anims.current = [];
   }
 
-  function run(a: Animated.CompositeAnimation) {
+  function go(a: Animated.CompositeAnimation) {
     anims.current.push(a);
     a.start();
+  }
+
+  function animateBars(minH: number, maxH: number, speed: number, stagger: number) {
+    bars.forEach((bar, i) => {
+      const delay = i * stagger;
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.sequence([
+            Animated.timing(bar, {toValue: maxH, duration: speed, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+            Animated.timing(bar, {toValue: minH, duration: speed, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+          ]),
+        ]),
+      );
+      go(loop);
+    });
   }
 
   useEffect(() => {
     stopAll();
     ring1.setValue(0);
     ring2.setValue(0);
-    ring3.setValue(0);
 
     if (stage === 'idle') {
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(scale,       {toValue: 1.03, duration: 3200, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-        Animated.timing(scale,       {toValue: 0.97, duration: 3200, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+      animateBars(0.2, 0.55, 1800, 120);
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(orbScale, {toValue: 1.03, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+        Animated.timing(orbScale, {toValue: 0.97, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(innerScale,  {toValue: 0.78, duration: 3200, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-        Animated.timing(innerScale,  {toValue: 0.65, duration: 3200, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(coreGlow, {toValue: 0.7, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+        Animated.timing(coreGlow, {toValue: 0.3, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(coreOpacity, {toValue: 0.9,  duration: 3200, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-        Animated.timing(coreOpacity, {toValue: 0.45, duration: 3200, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-      ])));
-      run(Animated.loop(Animated.timing(hexRot, {toValue: 1, duration: 18000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(outerRot, {toValue: 1, duration: 20000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(innerRot, {toValue: 1, duration: 12000, easing: Easing.linear, useNativeDriver: true})));
     }
 
     if (stage === 'recording') {
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(scale,       {toValue: 1.10, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
-        Animated.timing(scale,       {toValue: 1.04, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
+      animateBars(0.25, 1.0, 250, 60);
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(orbScale, {toValue: 1.08, duration: 250, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
+        Animated.timing(orbScale, {toValue: 1.02, duration: 250, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(innerScale,  {toValue: 0.88, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
-        Animated.timing(innerScale,  {toValue: 0.72, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(coreGlow, {toValue: 1.0, duration: 250, useNativeDriver: true}),
+        Animated.timing(coreGlow, {toValue: 0.5, duration: 250, useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(coreOpacity, {toValue: 1.0,  duration: 220, useNativeDriver: true}),
-        Animated.timing(coreOpacity, {toValue: 0.6,  duration: 220, useNativeDriver: true}),
-      ])));
-      run(Animated.loop(Animated.timing(ring1, {toValue: 1, duration: 900,  easing: Easing.out(Easing.quad), useNativeDriver: true})));
-      run(Animated.loop(Animated.timing(ring2, {toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true})));
-      run(Animated.loop(Animated.timing(ring3, {toValue: 1, duration: 2000, easing: Easing.out(Easing.quad), useNativeDriver: true})));
-      run(Animated.loop(Animated.timing(hexRot, {toValue: 1, duration: 4000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(outerRot, {toValue: 1, duration: 5000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(innerRot, {toValue: 1, duration: 3000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(ring1, {toValue: 1, duration: 900,  easing: Easing.out(Easing.quad), useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(ring2, {toValue: 1, duration: 1500, easing: Easing.out(Easing.quad), useNativeDriver: true})));
     }
 
     if (stage === 'transcribing' || stage === 'thinking') {
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(scale,       {toValue: 1.06, duration: 700, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-        Animated.timing(scale,       {toValue: 0.94, duration: 700, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+      animateBars(0.1, 0.85, 400, 40);
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(orbScale, {toValue: 1.06, duration: 600, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+        Animated.timing(orbScale, {toValue: 0.94, duration: 600, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(innerScale,  {toValue: 0.82, duration: 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-        Animated.timing(innerScale,  {toValue: 0.58, duration: 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(coreGlow, {toValue: 1.0, duration: 350, useNativeDriver: true}),
+        Animated.timing(coreGlow, {toValue: 0.2, duration: 350, useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(coreOpacity, {toValue: 1.0,  duration: 400, useNativeDriver: true}),
-        Animated.timing(coreOpacity, {toValue: 0.3,  duration: 400, useNativeDriver: true}),
-      ])));
-      run(Animated.loop(Animated.timing(scanLine, {toValue: 1, duration: 1200, easing: Easing.linear, useNativeDriver: true})));
-      run(Animated.loop(Animated.timing(hexRot,   {toValue: 1, duration: 3000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(outerRot, {toValue: 1, duration: 3000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(innerRot, {toValue: 1, duration: 1800, easing: Easing.linear, useNativeDriver: true})));
     }
 
     if (stage === 'speaking') {
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(scale,       {toValue: 1.13, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true}),
-        Animated.timing(scale,       {toValue: 1.04, duration: 160, easing: Easing.in(Easing.quad),  useNativeDriver: true}),
+      animateBars(0.2, 0.9, 180, 30);
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(orbScale, {toValue: 1.11, duration: 170, easing: Easing.out(Easing.quad), useNativeDriver: true}),
+        Animated.timing(orbScale, {toValue: 1.03, duration: 170, easing: Easing.in(Easing.quad),  useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(innerScale,  {toValue: 0.92, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true}),
-        Animated.timing(innerScale,  {toValue: 0.70, duration: 160, easing: Easing.in(Easing.quad),  useNativeDriver: true}),
+      go(Animated.loop(Animated.sequence([
+        Animated.timing(coreGlow, {toValue: 1.0, duration: 170, useNativeDriver: true}),
+        Animated.timing(coreGlow, {toValue: 0.4, duration: 170, useNativeDriver: true}),
       ])));
-      run(Animated.loop(Animated.sequence([
-        Animated.timing(coreOpacity, {toValue: 1.0,  duration: 160, useNativeDriver: true}),
-        Animated.timing(coreOpacity, {toValue: 0.5,  duration: 160, useNativeDriver: true}),
-      ])));
-      run(Animated.loop(Animated.timing(ring1, {toValue: 1, duration: 700,  easing: Easing.out(Easing.quad), useNativeDriver: true})));
-      run(Animated.loop(Animated.timing(ring2, {toValue: 1, duration: 1100, easing: Easing.out(Easing.quad), useNativeDriver: true})));
-      run(Animated.loop(Animated.timing(hexRot, {toValue: 1, duration: 6000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(outerRot, {toValue: 1, duration: 7000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(innerRot, {toValue: 1, duration: 4000, easing: Easing.linear, useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(ring1, {toValue: 1, duration: 700,  easing: Easing.out(Easing.quad), useNativeDriver: true})));
+      go(Animated.loop(Animated.timing(ring2, {toValue: 1, duration: 1200, easing: Easing.out(Easing.quad), useNativeDriver: true})));
     }
   }, [stage]);
 
-  const PRIMARY   = stage === 'recording'   ? '#ff3d7f'
+  const PRIMARY = stage === 'recording'   ? '#ff3d7f'
     : stage === 'thinking' || stage === 'transcribing' ? '#bf5af2'
-    : stage === 'speaking' ? '#0af'
+    : stage === 'speaking' ? '#00c8ff'
     : '#4f8ef7';
 
-  const SECONDARY = stage === 'recording'   ? '#ff8c00'
-    : stage === 'thinking' || stage === 'transcribing' ? '#7c3aed'
-    : stage === 'speaking' ? '#06f'
-    : '#1e3a8a';
+  const outerDeg = outerRot.interpolate({inputRange:[0,1], outputRange:['0deg','360deg']});
+  const innerDeg = innerRot.interpolate({inputRange:[0,1], outputRange:['360deg','0deg']});
+  const r1s = ring1.interpolate({inputRange:[0,1], outputRange:[1,2.4]});
+  const r1o = ring1.interpolate({inputRange:[0,0.5,1], outputRange:[0.5,0.15,0]});
+  const r2s = ring2.interpolate({inputRange:[0,1], outputRange:[1,3.2]});
+  const r2o = ring2.interpolate({inputRange:[0,0.5,1], outputRange:[0.3,0.08,0]});
 
-  const r1Scale   = ring1.interpolate({inputRange:[0,1], outputRange:[1, 2.2]});
-  const r1Opacity = ring1.interpolate({inputRange:[0,0.5,1], outputRange:[0.6,0.2,0]});
-  const r2Scale   = ring2.interpolate({inputRange:[0,1], outputRange:[1, 2.8]});
-  const r2Opacity = ring2.interpolate({inputRange:[0,0.5,1], outputRange:[0.35,0.1,0]});
-  const r3Scale   = ring3.interpolate({inputRange:[0,1], outputRange:[1, 3.5]});
-  const r3Opacity = ring3.interpolate({inputRange:[0,0.5,1], outputRange:[0.2,0.05,0]});
-  const hexDeg    = hexRot.interpolate({inputRange:[0,1], outputRange:['0deg','360deg']});
-  const scanY     = scanLine.interpolate({inputRange:[0,1], outputRange:[-ORB/2, ORB/2]});
-  const scanOp    = scanLine.interpolate({inputRange:[0,0.1,0.9,1], outputRange:[0,0.6,0.6,0]});
+  const RADIUS = ORB * 0.36;
 
   return (
     <View style={styles.container}>
       {/* Ripple rings */}
-      <Animated.View style={[styles.ring, {borderColor: PRIMARY, opacity: r3Opacity, transform:[{scale: r3Scale}]}]} />
-      <Animated.View style={[styles.ring, {borderColor: PRIMARY, opacity: r2Opacity, transform:[{scale: r2Scale}]}]} />
-      <Animated.View style={[styles.ring, {borderColor: PRIMARY, opacity: r1Opacity, transform:[{scale: r1Scale}]}]} />
+      <Animated.View style={[styles.ring, {borderColor: PRIMARY, opacity: r2o, transform:[{scale: r2s}]}]} />
+      <Animated.View style={[styles.ring, {borderColor: PRIMARY, opacity: r1o, transform:[{scale: r1s}]}]} />
 
-      {/* Rotating hex ring */}
-      <Animated.View style={[styles.hexRing, {borderColor: PRIMARY, transform:[{rotate: hexDeg}]}]} />
-      <Animated.View style={[styles.hexRingInner, {borderColor: SECONDARY, transform:[{rotate: hexDeg}, {scaleX: -1}]}]} />
+      {/* Outer orbit dashes — rotating */}
+      <Animated.View style={[styles.orbit, {borderColor: PRIMARY, transform:[{rotate: outerDeg}]}]} />
+      <Animated.View style={[styles.orbitInner, {borderColor: PRIMARY, transform:[{rotate: innerDeg}]}]} />
 
-      {/* Outer shell */}
-      <Animated.View style={[styles.outerShell, {borderColor: PRIMARY, shadowColor: PRIMARY, transform:[{scale}]}]}>
+      {/* The main orb body */}
+      <Animated.View style={[styles.orb, {shadowColor: PRIMARY, transform:[{scale: orbScale}]}]}>
 
-        {/* Glow fill */}
-        <Animated.View style={[styles.glowFill, {backgroundColor: PRIMARY, opacity: coreOpacity}]} />
+        {/* Ambient glow fill */}
+        <Animated.View style={[styles.ambientGlow, {backgroundColor: PRIMARY, opacity: coreGlow.interpolate({inputRange:[0,1],outputRange:[0,0.18]})}]} />
 
-        {/* Inner bright core */}
-        <Animated.View style={[styles.innerCore, {backgroundColor: PRIMARY, transform:[{scale: innerScale}]}]} />
+        {/* Iris — ring of bars */}
+        <View style={styles.irisContainer}>
+          {bars.map((barAnim, i) => {
+            const angle = (i / NUM_BARS) * 2 * Math.PI;
+            const x = Math.cos(angle) * RADIUS;
+            const y = Math.sin(angle) * RADIUS;
+            const barHeight = barAnim.interpolate({inputRange:[0,1], outputRange:[6, 38]});
+            return (
+              <Animated.View
+                key={i}
+                style={[
+                  styles.bar,
+                  {
+                    backgroundColor: PRIMARY,
+                    shadowColor: PRIMARY,
+                    height: barHeight,
+                    transform: [
+                      {translateX: x},
+                      {translateY: y},
+                      {rotate: `${(angle * 180) / Math.PI + 90}deg`},
+                    ],
+                  },
+                ]}
+              />
+            );
+          })}
+        </View>
 
-        {/* Scan line (thinking state) */}
-        <Animated.View style={[styles.scanLine, {backgroundColor: PRIMARY, opacity: scanOp, transform:[{translateY: scanY}]}]} />
+        {/* Pupil — glowing center dot */}
+        <Animated.View style={[styles.pupil, {backgroundColor: PRIMARY, shadowColor: PRIMARY, opacity: coreGlow}]} />
 
-        {/* Lens sheen top */}
+        {/* Lens sheens */}
         <View style={styles.sheenTop} />
-        {/* Lens sheen bottom-right */}
-        <View style={styles.sheenBottom} />
+        <View style={styles.sheenBot} />
       </Animated.View>
     </View>
   );
@@ -161,93 +183,90 @@ export function MikaOrb({stage}: Props) {
 
 const styles = StyleSheet.create({
   container: {
-    width: ORB * 4,
-    height: ORB * 4,
+    width: ORB * 3.5,
+    height: ORB * 3.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
   ring: {
     position: 'absolute',
-    width: ORB,
-    height: ORB,
+    width: ORB, height: ORB,
     borderRadius: ORB / 2,
     borderWidth: 1,
   },
-  hexRing: {
+  orbit: {
     position: 'absolute',
-    width: ORB + 36,
-    height: ORB + 36,
-    borderRadius: (ORB + 36) / 2,
+    width: ORB + 44, height: ORB + 44,
+    borderRadius: (ORB + 44) / 2,
     borderWidth: 1,
     borderStyle: 'dashed',
-    opacity: 0.25,
+    opacity: 0.3,
   },
-  hexRingInner: {
+  orbitInner: {
     position: 'absolute',
-    width: ORB + 18,
-    height: ORB + 18,
-    borderRadius: (ORB + 18) / 2,
+    width: ORB + 22, height: ORB + 22,
+    borderRadius: (ORB + 22) / 2,
     borderWidth: 0.5,
     borderStyle: 'dashed',
-    opacity: 0.15,
+    opacity: 0.18,
   },
-  outerShell: {
-    width: ORB,
-    height: ORB,
+  orb: {
+    width: ORB, height: ORB,
     borderRadius: ORB / 2,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(6,6,20,0.92)',
-    overflow: 'hidden',
+    backgroundColor: '#06070f',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 1,
+    shadowRadius: 36,
+    elevation: 24,
+  },
+  ambientGlow: {
+    position: 'absolute',
+    width: ORB, height: ORB,
+    borderRadius: ORB / 2,
+  },
+  irisContainer: {
+    position: 'absolute',
+    width: ORB, height: ORB,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bar: {
+    position: 'absolute',
+    width: 3,
+    borderRadius: 2,
+    opacity: 0.85,
     shadowOffset: {width: 0, height: 0},
     shadowOpacity: 0.9,
-    shadowRadius: 40,
-    elevation: 30,
+    shadowRadius: 4,
+    elevation: 4,
   },
-  glowFill: {
-    position: 'absolute',
-    width: ORB,
-    height: ORB,
-    borderRadius: ORB / 2,
-    opacity: 0.12,
-  },
-  innerCore: {
-    width: ORB * 0.55,
-    height: ORB * 0.55,
-    borderRadius: ORB * 0.275,
-    opacity: 0.9,
-    shadowColor: '#fff',
+  pupil: {
+    width: 18, height: 18,
+    borderRadius: 9,
     shadowOffset: {width: 0, height: 0},
-    shadowOpacity: 0.6,
-    shadowRadius: 18,
+    shadowOpacity: 1,
+    shadowRadius: 14,
     elevation: 10,
-  },
-  scanLine: {
-    position: 'absolute',
-    width: ORB,
-    height: 1.5,
-    opacity: 0.5,
   },
   sheenTop: {
     position: 'absolute',
-    top: ORB * 0.14,
-    left: ORB * 0.22,
-    width: ORB * 0.28,
-    height: ORB * 0.12,
-    borderRadius: ORB * 0.08,
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    top: ORB * 0.12, left: ORB * 0.22,
+    width: ORB * 0.26, height: ORB * 0.1,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.18)',
     transform: [{rotate: '-25deg'}],
   },
-  sheenBottom: {
+  sheenBot: {
     position: 'absolute',
-    bottom: ORB * 0.18,
-    right: ORB * 0.2,
-    width: ORB * 0.12,
-    height: ORB * 0.06,
-    borderRadius: ORB * 0.04,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    bottom: ORB * 0.16, right: ORB * 0.2,
+    width: ORB * 0.1, height: ORB * 0.05,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.07)',
     transform: [{rotate: '-25deg'}],
   },
 });

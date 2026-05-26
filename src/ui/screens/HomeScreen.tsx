@@ -6,25 +6,21 @@ import {
   Text,
   TouchableOpacity,
   Pressable,
-  Dimensions,
+  Animated,
 } from 'react-native';
 import Voice from '@react-native-voice/voice';
 import Tts from 'react-native-tts';
 
 import {MikaOrb} from '../components/MikaOrb';
-import {FloatingText} from '../components/FloatingText';
 import {VoiceSettings} from '../components/VoiceSettings';
 
 import {chat} from '../../slm/slmEngine';
 import {ProcessingStage} from '../../types';
 
-const {height} = Dimensions.get('window');
-
 export function HomeScreen() {
   const [stage, setStage] = useState<ProcessingStage>('idle');
   const [liveText, setLiveText] = useState('');
   const [replyText, setReplyText] = useState('');
-  const [suckedIn, setSuckedIn] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
   const stageRef = useRef<ProcessingStage>('idle');
@@ -32,9 +28,51 @@ export function HomeScreen() {
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const bestResultRef = useRef('');
 
+  // Text animation values
+  const liveOpacity  = useRef(new Animated.Value(0)).current;
+  const liveY        = useRef(new Animated.Value(0)).current;
+  const liveScale    = useRef(new Animated.Value(1)).current;
+  const replyOpacity = useRef(new Animated.Value(0)).current;
+  const replyY       = useRef(new Animated.Value(20)).current;
+
   function setStageSync(s: ProcessingStage) {
     stageRef.current = s;
     setStage(s);
+  }
+
+  // Show live text floating up toward orb
+  function showLive(text: string) {
+    setLiveText(text);
+    liveY.setValue(0);
+    liveScale.setValue(1);
+    Animated.timing(liveOpacity, {toValue: 1, duration: 150, useNativeDriver: true}).start();
+  }
+
+  // Suck live text into orb — shrink + float up + fade
+  function suckIn() {
+    Animated.parallel([
+      Animated.timing(liveOpacity, {toValue: 0, duration: 500, useNativeDriver: true}),
+      Animated.timing(liveY,       {toValue: -40, duration: 500, useNativeDriver: true}),
+      Animated.timing(liveScale,   {toValue: 0.4, duration: 500, useNativeDriver: true}),
+    ]).start(() => { setLiveText(''); liveY.setValue(0); liveScale.setValue(1); });
+  }
+
+  // Emit reply text from orb downward
+  function showReply(text: string) {
+    setReplyText(text);
+    replyY.setValue(-20);
+    replyOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(replyOpacity, {toValue: 1,  duration: 350, useNativeDriver: true}),
+      Animated.timing(replyY,       {toValue: 0,  duration: 350, useNativeDriver: true}),
+    ]).start();
+  }
+
+  function hideReply() {
+    Animated.parallel([
+      Animated.timing(replyOpacity, {toValue: 0,  duration: 400, useNativeDriver: true}),
+      Animated.timing(replyY,       {toValue: 20, duration: 400, useNativeDriver: true}),
+    ]).start(() => setReplyText(''));
   }
 
   useEffect(() => {
@@ -42,27 +80,17 @@ export function HomeScreen() {
       const text = e.value?.[0] ?? '';
       if (text) {
         bestResultRef.current = text;
-        if (stageRef.current === 'recording') { setLiveText(text); }
+        if (stageRef.current === 'recording') { showLive(text); }
       }
     };
     Voice.onSpeechError = () => {};
 
     Tts.getInitStatus()
-      .then(() => {
-        Tts.setDucking(true);
-        Tts.setIgnoreSilentSwitch('ignore');
-      })
-      .catch((e: any) => {
-        if (e?.code === 'no_engine') { Tts.requestInstallEngine(); }
-      });
-    Tts.addEventListener('tts-finish', () => {
-      clearTimeout(ttsTimeoutRef.current);
-      setStageSync('idle');
-    });
-    Tts.addEventListener('tts-cancel', () => {
-      clearTimeout(ttsTimeoutRef.current);
-      setStageSync('idle');
-    });
+      .then(() => { Tts.setDucking(true); Tts.setIgnoreSilentSwitch('ignore'); })
+      .catch((e: any) => { if (e?.code === 'no_engine') { Tts.requestInstallEngine(); } });
+
+    Tts.addEventListener('tts-finish', () => { clearTimeout(ttsTimeoutRef.current); setStageSync('idle'); hideReply(); });
+    Tts.addEventListener('tts-cancel', () => { clearTimeout(ttsTimeoutRef.current); setStageSync('idle'); hideReply(); });
 
     return () => {
       Voice.destroy().catch(() => {});
@@ -75,23 +103,16 @@ export function HomeScreen() {
 
   const processText = useCallback(async (text: string) => {
     if (!text.trim()) { setStageSync('idle'); setLiveText(''); return; }
-
-    // Suck the text into the orb
-    setSuckedIn(true);
-    setTimeout(() => { setLiveText(''); setSuckedIn(false); }, 700);
-
+    suckIn();
     setStageSync('thinking');
     try {
       const reply = await chat(text);
-      setReplyText(reply);
+      showReply(reply);
       setStageSync('speaking');
       Tts.speak(reply);
       const ms = Math.max(4000, reply.split(' ').length * 400);
       ttsTimeoutRef.current = setTimeout(() => {
-        if (stageRef.current === 'speaking') {
-          setStageSync('idle');
-          setTimeout(() => setReplyText(''), 800);
-        }
+        if (stageRef.current === 'speaking') { setStageSync('idle'); hideReply(); }
       }, ms);
     } catch {
       setStageSync('idle');
@@ -104,12 +125,10 @@ export function HomeScreen() {
       await Voice.destroy();
       bestResultRef.current = '';
       setLiveText('');
-      setReplyText('');
+      hideReply();
       setStageSync('recording');
       await Voice.start('en-US');
-    } catch {
-      setStageSync('idle');
-    }
+    } catch { setStageSync('idle'); }
   }, []);
 
   const stopRecordingAndProcess = useCallback(async () => {
@@ -130,6 +149,8 @@ export function HomeScreen() {
     stage === 'thinking'     ? 'Thinking' :
     stage === 'speaking'     ? 'Speaking' : '';
 
+  const isActive = ['transcribing','thinking','speaking'].includes(stage);
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -140,31 +161,25 @@ export function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Orb area */}
+      {/* Orb — takes upper portion */}
       <View style={styles.orbArea}>
         <MikaOrb stage={stage} />
-
-        {/* Live transcription drifts up from orb */}
-        <View style={styles.floatAbove} pointerEvents="none">
-          <FloatingText
-            text={liveText}
-            visible={!!liveText && (stage === 'recording' || stage === 'transcribing')}
-            suckedIn={suckedIn}
-          />
-        </View>
-
-        {/* Reply text appears below orb */}
-        <View style={styles.floatBelow} pointerEvents="none">
-          <FloatingText
-            text={replyText}
-            visible={!!replyText && stage === 'speaking'}
-          />
-        </View>
       </View>
 
-      {/* Stage label */}
-      <View style={styles.labelRow}>
-        <Text style={styles.stageLabel}>{stageLabel}</Text>
+      {/* Text zone — between orb and button */}
+      <View style={styles.textZone}>
+        {/* Live input text — floats up into orb */}
+        {liveText ? (
+          <Animated.Text style={[styles.liveText, {opacity: liveOpacity, transform:[{translateY: liveY},{scale: liveScale}]}]} numberOfLines={3}>
+            {liveText}
+          </Animated.Text>
+        ) : replyText ? (
+          <Animated.Text style={[styles.replyText, {opacity: replyOpacity, transform:[{translateY: replyY}]}]} numberOfLines={5}>
+            {replyText}
+          </Animated.Text>
+        ) : (
+          <Text style={styles.stageLabel}>{stageLabel}</Text>
+        )}
       </View>
 
       {/* Hold-to-speak button */}
@@ -176,9 +191,9 @@ export function HomeScreen() {
             styles.holdButton,
             pressed && styles.holdButtonActive,
             stage === 'recording' && styles.holdButtonRecording,
-            ['transcribing','thinking','speaking'].includes(stage) && styles.holdButtonDisabled,
+            isActive && styles.holdButtonDisabled,
           ]}
-          disabled={['transcribing','thinking','speaking'].includes(stage)}>
+          disabled={isActive}>
           <Text style={styles.holdButtonText}>
             {stage === 'recording' ? 'Release' : 'Hold to speak'}
           </Text>
@@ -191,11 +206,7 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#08080f',
-    alignItems: 'center',
-  },
+  container: {flex: 1, backgroundColor: '#08080f', alignItems: 'center'},
   header: {
     width: '100%',
     flexDirection: 'row',
@@ -206,80 +217,74 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   title: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
-    color: 'rgba(255,255,255,0.3)',
+    color: 'rgba(255,255,255,0.2)',
     letterSpacing: 10,
     textTransform: 'uppercase',
   },
-  settingsBtn: {
-    position: 'absolute',
-    right: 24,
-    padding: 4,
-  },
-  settingsIcon: {
-    fontSize: 20,
-    color: 'rgba(255,255,255,0.25)',
-  },
+  settingsBtn: {position: 'absolute', right: 24, padding: 4},
+  settingsIcon: {fontSize: 20, color: 'rgba(255,255,255,0.2)'},
   orbArea: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  floatAbove: {
-    position: 'absolute',
-    top: -120,
-    alignItems: 'center',
-    width: '100%',
-  },
-  floatBelow: {
-    position: 'absolute',
-    bottom: -120,
-    alignItems: 'center',
-    width: '100%',
-  },
-  labelRow: {
-    height: 24,
+  textZone: {
+    height: 120,
+    width: '85%',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    paddingHorizontal: 8,
+  },
+  liveText: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 16,
+    fontWeight: '300',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+    lineHeight: 24,
+  },
+  replyText: {
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 17,
+    fontWeight: '300',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+    lineHeight: 26,
   },
   stageLabel: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.25)',
-    letterSpacing: 4,
+    color: 'rgba(255,255,255,0.18)',
+    letterSpacing: 5,
     textTransform: 'uppercase',
   },
-  buttonArea: {
-    paddingBottom: 48,
-    paddingTop: 8,
-    alignItems: 'center',
-  },
+  buttonArea: {paddingBottom: 44, paddingTop: 8, alignItems: 'center'},
   holdButton: {
     paddingHorizontal: 48,
     paddingVertical: 18,
     borderRadius: 50,
     borderWidth: 1,
-    borderColor: 'rgba(99,102,241,0.4)',
-    backgroundColor: 'rgba(99,102,241,0.08)',
+    borderColor: 'rgba(79,142,247,0.35)',
+    backgroundColor: 'rgba(79,142,247,0.07)',
   },
   holdButtonActive: {
-    backgroundColor: 'rgba(99,102,241,0.18)',
-    borderColor: 'rgba(99,102,241,0.7)',
+    backgroundColor: 'rgba(79,142,247,0.18)',
+    borderColor: 'rgba(79,142,247,0.7)',
   },
   holdButtonRecording: {
-    borderColor: 'rgba(255,77,143,0.7)',
-    backgroundColor: 'rgba(255,77,143,0.12)',
+    borderColor: 'rgba(255,61,127,0.7)',
+    backgroundColor: 'rgba(255,61,127,0.1)',
   },
   holdButtonDisabled: {
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.06)',
     backgroundColor: 'transparent',
   },
   holdButtonText: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 14,
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 13,
     fontWeight: '500',
-    letterSpacing: 2,
+    letterSpacing: 3,
     textTransform: 'uppercase',
   },
 });
