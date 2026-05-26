@@ -6,7 +6,7 @@ import {
   Text,
   Alert,
 } from 'react-native';
-import Voice, {SpeechResultsEvent, SpeechErrorEvent} from '@react-native-voice/voice';
+import Voice from '@react-native-voice/voice';
 import Tts from 'react-native-tts';
 
 import {RecordButton} from '../components/RecordButton';
@@ -22,93 +22,81 @@ export function HomeScreen() {
 
   const stageRef = useRef<ProcessingStage>('idle');
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const transcribeTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const processingRef = useRef(false);
+  const flushTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Accumulates results only during the active recording window
+  const activeResultRef = useRef<string>('');
+  const recordingRef = useRef(false);
 
-  const setStageSync = (s: ProcessingStage) => {
+  function setStageSync(s: ProcessingStage) {
     stageRef.current = s;
     setStage(s);
-  };
-
-  const speak = useCallback((text: string) => {
-    setStageSync('speaking');
-    Tts.speak(text);
-    const ms = Math.max(4000, text.split(' ').length * 400);
-    ttsTimeoutRef.current = setTimeout(() => {
-      if (stageRef.current === 'speaking') { setStageSync('idle'); }
-    }, ms);
-  }, []);
+  }
 
   useEffect(() => {
-    Voice.onSpeechResults = (e: SpeechResultsEvent) => {
-      clearTimeout(transcribeTimeoutRef.current);
-      if (processingRef.current) { return; }
-      const text = e.value?.[0]?.trim() ?? '';
-      if (!text) { setStageSync('idle'); return; }
-
-      processingRef.current = true;
-      setCurrentTranscription(text);
-      setStageSync('thinking');
-
-      chat(text)
-        .then(reply => {
-          const turn: ConversationTurn = {
-            id: `${Date.now()}`,
-            timestamp: Date.now(),
-            userInput: text,
-            transcription: text,
-            response: reply,
-          };
-          setTurns(prev => [...prev, turn]);
-          setCurrentTranscription('');
-          speak(reply);
-        })
-        .catch(err => {
-          Alert.alert('Error', err instanceof Error ? err.message : String(err));
-          setStageSync('idle');
-        })
-        .finally(() => {
-          processingRef.current = false;
-        });
-    };
-
-    Voice.onSpeechError = (_e: SpeechErrorEvent) => {
-      clearTimeout(transcribeTimeoutRef.current);
-      if (!processingRef.current) { setStageSync('idle'); }
-    };
-
-    (async () => {
-      try {
-        await Tts.getInitStatus();
+    Tts.getInitStatus()
+      .then(() => {
         Tts.setDucking(true);
         Tts.setIgnoreSilentSwitch('ignore');
-        Tts.addEventListener('tts-finish', () => {
-          clearTimeout(ttsTimeoutRef.current);
-          setStageSync('idle');
-        });
-        Tts.addEventListener('tts-cancel', () => {
-          clearTimeout(ttsTimeoutRef.current);
-          setStageSync('idle');
-        });
-      } catch (e: any) {
-        if (e?.code === 'no_engine') { await Tts.requestInstallEngine(); }
-      }
-    })();
-
-    return () => {
-      Voice.destroy().then(Voice.removeAllListeners);
+      })
+      .catch((e: any) => {
+        if (e?.code === 'no_engine') { Tts.requestInstallEngine(); }
+      });
+    Tts.addEventListener('tts-finish', () => {
       clearTimeout(ttsTimeoutRef.current);
-      clearTimeout(transcribeTimeoutRef.current);
+      setStageSync('idle');
+    });
+    Tts.addEventListener('tts-cancel', () => {
+      clearTimeout(ttsTimeoutRef.current);
+      setStageSync('idle');
+    });
+    return () => {
       Tts.removeAllListeners('tts-finish');
       Tts.removeAllListeners('tts-cancel');
     };
-  }, [speak]);
+  }, []);
+
+  const processText = useCallback(async (text: string) => {
+    if (!text.trim()) { setStageSync('idle'); return; }
+    setCurrentTranscription(text);
+    setStageSync('thinking');
+    try {
+      const reply = await chat(text);
+      setTurns(prev => [...prev, {
+        id: `${Date.now()}`,
+        timestamp: Date.now(),
+        userInput: text,
+        transcription: text,
+        response: reply,
+      } as ConversationTurn]);
+      setCurrentTranscription('');
+      setStageSync('speaking');
+      Tts.speak(reply);
+      const ms = Math.max(4000, reply.split(' ').length * 400);
+      ttsTimeoutRef.current = setTimeout(() => {
+        if (stageRef.current === 'speaking') { setStageSync('idle'); }
+      }, ms);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : String(err));
+      setStageSync('idle');
+    }
+  }, []);
 
   const startRecording = useCallback(async () => {
     if (stageRef.current !== 'idle') { return; }
     try {
-      processingRef.current = false;
-      setCurrentTranscription('');
+      // Tear down any previous session cleanly
+      await Voice.destroy();
+      activeResultRef.current = '';
+      recordingRef.current = true;
+
+      Voice.onSpeechResults = e => {
+        // Only store if we're still in the recording window
+        if (recordingRef.current) {
+          activeResultRef.current = e.value?.[0] ?? '';
+        }
+      };
+      Voice.onSpeechError = () => {};
+
       setStageSync('recording');
       await Voice.start('en-US');
     } catch (err) {
@@ -119,17 +107,21 @@ export function HomeScreen() {
 
   const stopRecordingAndProcess = useCallback(async () => {
     if (stageRef.current !== 'recording') { return; }
+    recordingRef.current = false; // close the recording window immediately
+    setStageSync('transcribing');
+
     try {
-      setStageSync('transcribing');
       await Voice.stop();
-      transcribeTimeoutRef.current = setTimeout(() => {
-        if (stageRef.current === 'transcribing') { setStageSync('idle'); }
-      }, 3000);
-    } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : String(err));
-      setStageSync('idle');
-    }
-  }, []);
+    } catch (_) {}
+
+    // Wait a tick for the final onSpeechResults to arrive, then process
+    flushTimeoutRef.current = setTimeout(() => {
+      const text = activeResultRef.current;
+      activeResultRef.current = '';
+      Voice.destroy().catch(() => {});
+      processText(text);
+    }, 500);
+  }, [processText]);
 
   return (
     <SafeAreaView style={styles.container}>
