@@ -23,9 +23,7 @@ export function HomeScreen() {
   const stageRef = useRef<ProcessingStage>('idle');
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // Accumulates results only during the active recording window
-  const activeResultRef = useRef<string>('');
-  const recordingRef = useRef(false);
+  const bestResultRef = useRef('');
 
   function setStageSync(s: ProcessingStage) {
     stageRef.current = s;
@@ -33,6 +31,13 @@ export function HomeScreen() {
   }
 
   useEffect(() => {
+    // Always keep updating bestResultRef as Voice fires partials
+    Voice.onSpeechResults = e => {
+      const text = e.value?.[0] ?? '';
+      if (text) { bestResultRef.current = text; }
+    };
+    Voice.onSpeechError = () => {};
+
     Tts.getInitStatus()
       .then(() => {
         Tts.setDucking(true);
@@ -50,6 +55,9 @@ export function HomeScreen() {
       setStageSync('idle');
     });
     return () => {
+      Voice.destroy().catch(() => {});
+      clearTimeout(ttsTimeoutRef.current);
+      clearTimeout(flushTimeoutRef.current);
       Tts.removeAllListeners('tts-finish');
       Tts.removeAllListeners('tts-cancel');
     };
@@ -84,19 +92,8 @@ export function HomeScreen() {
   const startRecording = useCallback(async () => {
     if (stageRef.current !== 'idle') { return; }
     try {
-      // Tear down any previous session cleanly
       await Voice.destroy();
-      activeResultRef.current = '';
-      recordingRef.current = true;
-
-      Voice.onSpeechResults = e => {
-        // Only store if we're still in the recording window
-        if (recordingRef.current) {
-          activeResultRef.current = e.value?.[0] ?? '';
-        }
-      };
-      Voice.onSpeechError = () => {};
-
+      bestResultRef.current = '';
       setStageSync('recording');
       await Voice.start('en-US');
     } catch (err) {
@@ -107,17 +104,15 @@ export function HomeScreen() {
 
   const stopRecordingAndProcess = useCallback(async () => {
     if (stageRef.current !== 'recording') { return; }
-    recordingRef.current = false; // close the recording window immediately
     setStageSync('transcribing');
 
-    try {
-      await Voice.stop();
-    } catch (_) {}
+    // Stop Voice — this triggers one final onSpeechResults with the complete utterance
+    try { await Voice.stop(); } catch (_) {}
 
-    // Wait a tick for the final onSpeechResults to arrive, then process
+    // Wait 500ms for the final result to arrive after stop, then take best
     flushTimeoutRef.current = setTimeout(() => {
-      const text = activeResultRef.current;
-      activeResultRef.current = '';
+      const text = bestResultRef.current;
+      bestResultRef.current = '';
       Voice.destroy().catch(() => {});
       processText(text);
     }, 500);
