@@ -23,7 +23,7 @@
     "react-native-nitro-modules": "^0.35.7",
     "react-native-safe-area-context": "^5.5.2",
     "react-native-tts": "^4.1.1",
-    "@react-native-voice/voice": "^3.2.4",
+    "@react-native-voice/voice": "^3.2.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
