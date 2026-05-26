@@ -1,48 +1,44 @@
-import React, {useEffect} from 'react';
-import {StyleSheet, Dimensions} from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withSequence,
-  Easing,
-} from 'react-native-reanimated';
+import React, {useEffect, useRef} from 'react';
+import {Animated, Easing, StyleSheet, Dimensions} from 'react-native';
 
 const {width} = Dimensions.get('window');
 
 interface Props {
   text: string;
   visible: boolean;
-  suckedIn?: boolean; // true = drift toward center + fade
+  suckedIn?: boolean;
 }
 
 export function FloatingText({text, visible, suckedIn}: Props) {
-  const opacity = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const scale = useSharedValue(1);
+  const opacity   = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const scale     = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (visible && !suckedIn) {
-      opacity.value = withTiming(1, {duration: 200});
-      translateY.value = withTiming(0, {duration: 200});
-      scale.value = withTiming(1, {duration: 200});
+      Animated.parallel([
+        Animated.timing(opacity,    {toValue: 1,   duration: 200, useNativeDriver: true}),
+        Animated.timing(translateY, {toValue: 0,   duration: 200, useNativeDriver: true}),
+        Animated.timing(scale,      {toValue: 1,   duration: 200, useNativeDriver: true}),
+      ]).start();
     } else if (suckedIn) {
-      // Drift toward orb (down) and shrink + fade
-      opacity.value = withTiming(0, {duration: 600, easing: Easing.in(Easing.quad)});
-      translateY.value = withTiming(80, {duration: 600, easing: Easing.in(Easing.quad)});
-      scale.value = withTiming(0.4, {duration: 600, easing: Easing.in(Easing.quad)});
+      Animated.parallel([
+        Animated.timing(opacity,    {toValue: 0,   duration: 550, easing: Easing.in(Easing.quad), useNativeDriver: true}),
+        Animated.timing(translateY, {toValue: 90,  duration: 550, easing: Easing.in(Easing.quad), useNativeDriver: true}),
+        Animated.timing(scale,      {toValue: 0.3, duration: 550, easing: Easing.in(Easing.quad), useNativeDriver: true}),
+      ]).start();
     } else {
-      opacity.value = withTiming(0, {duration: 300});
+      Animated.timing(opacity, {toValue: 0, duration: 300, useNativeDriver: true}).start(() => {
+        translateY.setValue(0);
+        scale.setValue(1);
+      });
     }
   }, [visible, suckedIn]);
 
-  const style = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-    transform: [{translateY: translateY.value}, {scale: scale.value}],
-  }));
-
   return (
-    <Animated.Text style={[styles.text, style]} numberOfLines={4}>
+    <Animated.Text
+      style={[styles.text, {opacity, transform: [{translateY}, {scale}]}]}
+      numberOfLines={4}>
       {text}
     </Animated.Text>
   );
@@ -50,13 +46,12 @@ export function FloatingText({text, visible, suckedIn}: Props) {
 
 const styles = StyleSheet.create({
   text: {
-    position: 'absolute',
-    width: width * 0.75,
+    width: width * 0.72,
     textAlign: 'center',
-    color: 'rgba(255,255,255,0.85)',
+    color: 'rgba(255,255,255,0.82)',
     fontSize: 18,
     fontWeight: '300',
-    letterSpacing: 0.5,
-    lineHeight: 26,
+    letterSpacing: 0.4,
+    lineHeight: 27,
   },
 });
