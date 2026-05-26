@@ -6,12 +6,12 @@ import {
   Text,
   Alert,
 } from 'react-native';
+import Voice, {SpeechResultsEvent, SpeechErrorEvent} from '@react-native-voice/voice';
 import Tts from 'react-native-tts';
 
 import {RecordButton} from '../components/RecordButton';
 import {TranscriptionDisplay} from '../components/TranscriptionDisplay';
 
-import {initVoice, startListening, stopListening, destroyVoice} from '../../slm/whisperEngine';
 import {chat} from '../../slm/slmEngine';
 import {ConversationTurn, ProcessingStage} from '../../types';
 
@@ -20,53 +20,62 @@ export function HomeScreen() {
   const [currentTranscription, setCurrentTranscription] = useState('');
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
 
+  const stageRef = useRef<ProcessingStage>('idle');
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const transcribeTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const processingRef = useRef(false);
+
+  const setStageSync = (s: ProcessingStage) => {
+    stageRef.current = s;
+    setStage(s);
+  };
 
   const speak = useCallback((text: string) => {
-    setStage('speaking');
+    setStageSync('speaking');
     Tts.speak(text);
     const ms = Math.max(4000, text.split(' ').length * 400);
-    ttsTimeoutRef.current = setTimeout(
-      () => setStage(s => (s === 'speaking' ? 'idle' : s)),
-      ms,
-    );
+    ttsTimeoutRef.current = setTimeout(() => {
+      if (stageRef.current === 'speaking') { setStageSync('idle'); }
+    }, ms);
   }, []);
 
-  const handleTranscript = useCallback(async (transcription: string) => {
-    clearTimeout(transcribeTimeoutRef.current);
-    if (!transcription?.trim()) { setStage('idle'); return; }
-    setCurrentTranscription(transcription);
-    setStage('thinking');
-    try {
-      const reply = await chat(transcription);
-      const turn: ConversationTurn = {
-        id: `${Date.now()}`,
-        timestamp: Date.now(),
-        userInput: transcription,
-        transcription,
-        response: reply,
-      };
-      setTurns(prev => [...prev, turn]);
-      setCurrentTranscription('');
-      speak(reply);
-    } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : String(err));
-      setStage('idle');
-    }
-  }, [speak]);
-
   useEffect(() => {
-    initVoice(
-      text => {
-        setStage('thinking');
-        handleTranscript(text);
-      },
-      err => {
-        console.warn('Voice error:', err);
-        setStage('idle');
-      },
-    );
+    Voice.onSpeechResults = (e: SpeechResultsEvent) => {
+      clearTimeout(transcribeTimeoutRef.current);
+      if (processingRef.current) { return; }
+      const text = e.value?.[0]?.trim() ?? '';
+      if (!text) { setStageSync('idle'); return; }
+
+      processingRef.current = true;
+      setCurrentTranscription(text);
+      setStageSync('thinking');
+
+      chat(text)
+        .then(reply => {
+          const turn: ConversationTurn = {
+            id: `${Date.now()}`,
+            timestamp: Date.now(),
+            userInput: text,
+            transcription: text,
+            response: reply,
+          };
+          setTurns(prev => [...prev, turn]);
+          setCurrentTranscription('');
+          speak(reply);
+        })
+        .catch(err => {
+          Alert.alert('Error', err instanceof Error ? err.message : String(err));
+          setStageSync('idle');
+        })
+        .finally(() => {
+          processingRef.current = false;
+        });
+    };
+
+    Voice.onSpeechError = (_e: SpeechErrorEvent) => {
+      clearTimeout(transcribeTimeoutRef.current);
+      if (!processingRef.current) { setStageSync('idle'); }
+    };
 
     (async () => {
       try {
@@ -75,49 +84,52 @@ export function HomeScreen() {
         Tts.setIgnoreSilentSwitch('ignore');
         Tts.addEventListener('tts-finish', () => {
           clearTimeout(ttsTimeoutRef.current);
-          setStage('idle');
+          setStageSync('idle');
         });
         Tts.addEventListener('tts-cancel', () => {
           clearTimeout(ttsTimeoutRef.current);
-          setStage('idle');
+          setStageSync('idle');
         });
       } catch (e: any) {
         if (e?.code === 'no_engine') { await Tts.requestInstallEngine(); }
-        console.warn('TTS init failed:', e);
       }
     })();
 
     return () => {
-      destroyVoice();
+      Voice.destroy().then(Voice.removeAllListeners);
+      clearTimeout(ttsTimeoutRef.current);
       clearTimeout(transcribeTimeoutRef.current);
       Tts.removeAllListeners('tts-finish');
       Tts.removeAllListeners('tts-cancel');
     };
-  }, [handleTranscript]);
+  }, [speak]);
 
   const startRecording = useCallback(async () => {
+    if (stageRef.current !== 'idle') { return; }
     try {
+      processingRef.current = false;
       setCurrentTranscription('');
-      setStage('recording');
-      await startListening();
+      setStageSync('recording');
+      await Voice.start('en-US');
     } catch (err) {
       Alert.alert('Microphone Error', err instanceof Error ? err.message : String(err));
-      setStage('idle');
+      setStageSync('idle');
     }
   }, []);
 
   const stopRecordingAndProcess = useCallback(async () => {
-    if (stage !== 'recording') { return; }
+    if (stageRef.current !== 'recording') { return; }
     try {
-      setStage('transcribing');
-      await stopListening();
-      // If no speech result arrives within 3s, bail out
-      transcribeTimeoutRef.current = setTimeout(() => setStage('idle'), 3000);
+      setStageSync('transcribing');
+      await Voice.stop();
+      transcribeTimeoutRef.current = setTimeout(() => {
+        if (stageRef.current === 'transcribing') { setStageSync('idle'); }
+      }, 3000);
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : String(err));
-      setStage('idle');
+      setStageSync('idle');
     }
-  }, [stage]);
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
