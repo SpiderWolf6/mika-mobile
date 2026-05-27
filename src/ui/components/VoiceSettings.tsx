@@ -21,7 +21,14 @@ export function VoiceSettings({visible, onClose}: Props) {
     if (!visible) { return; }
     Tts.voices().then((v: any[]) => {
       const english = v.filter(x => x.language?.startsWith('en'));
-      setVoices(english);
+      const seen = new Set<string>();
+      const deduped = english.filter(x => {
+        const key = x.name;
+        if (seen.has(key)) { return false; }
+        seen.add(key);
+        return true;
+      });
+      setVoices(deduped);
     });
     Tts.getInitStatus().then(() => {
       // Get current default — no direct API, just note selected
