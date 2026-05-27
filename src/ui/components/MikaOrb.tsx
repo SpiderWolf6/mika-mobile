@@ -5,15 +5,15 @@ import {ProcessingStage} from '../../types';
 
 const ORB = 200;
 const NUM_BARS = 24;
-// Blob radius controls how far bar tips reach (and thus blob boundary)
 const BLOB_RADIUS = ORB * 0.46;
 const CENTER = ORB / 2;
 
 interface Props {
   stage: ProcessingStage;
+  audioLevel?: number; // 0–1, live mic or simulated TTS amplitude
 }
 
-// Build a smooth closed SVG path through points using catmull-rom → cubic bezier
+// Smooth closed SVG path via catmull-rom → cubic bezier
 function smoothPath(pts: {x: number; y: number}[]): string {
   const n = pts.length;
   const cp = pts.map((_, i) => {
@@ -21,7 +21,6 @@ function smoothPath(pts: {x: number; y: number}[]): string {
     const p1 = pts[i];
     const p2 = pts[(i + 1) % n];
     const p3 = pts[(i + 2) % n];
-    // Catmull-rom control points with tension 0.4
     const t = 0.4;
     return {
       cp1x: p1.x + (p2.x - p0.x) * t / 2,
@@ -30,18 +29,25 @@ function smoothPath(pts: {x: number; y: number}[]): string {
       cp2y: p2.y - (p3.y - p1.y) * t / 2,
     };
   });
-  let d = `M ${pts[0].x} ${pts[0].y}`;
+  let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
   for (let i = 0; i < n; i++) {
     const next = pts[(i + 1) % n];
     const c = cp[i];
-    d += ` C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${next.x} ${next.y}`;
+    d += ` C ${c.cp1x.toFixed(2)} ${c.cp1y.toFixed(2)} ${c.cp2x.toFixed(2)} ${c.cp2y.toFixed(2)} ${next.x.toFixed(2)} ${next.y.toFixed(2)}`;
   }
-  d += ' Z';
-  return d;
+  return d + ' Z';
 }
 
-export function MikaOrb({stage}: Props) {
-  const bars      = useRef(Array.from({length: NUM_BARS}, () => new Animated.Value(0.35))).current;
+// Blob points scaled outward by a factor (for ghost ripple)
+function scaledBlobPath(pts: {x: number; y: number}[], factor: number): string {
+  const scaled = pts.map(p => ({
+    x: CENTER + (p.x - CENTER) * factor,
+    y: CENTER + (p.y - CENTER) * factor,
+  }));
+  return smoothPath(scaled);
+}
+
+export function MikaOrb({stage, audioLevel = 0}: Props) {
   const outerRot  = useRef(new Animated.Value(0)).current;
   const innerRot  = useRef(new Animated.Value(0)).current;
   const orbScale  = useRef(new Animated.Value(1)).current;
@@ -51,7 +57,17 @@ export function MikaOrb({stage}: Props) {
   const anims     = useRef<Animated.CompositeAnimation[]>([]);
   const barTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // JS-side bar scales used for blob path and iris bars
+  const barScalesRef = useRef<number[]>(Array(NUM_BARS).fill(0.35));
   const [blobScales, setBlobScales] = useState<number[]>(Array(NUM_BARS).fill(0.35));
+
+  // Animated values for native-driver iris bars
+  const bars = useRef(Array.from({length: NUM_BARS}, () => new Animated.Value(0.35))).current;
+
+  // Audio-driven mode: when audioLevel > 0 and stage is recording/speaking,
+  // we skip random roaming and push bar values from audioLevel
+  const audioLevelRef = useRef(audioLevel);
+  useEffect(() => { audioLevelRef.current = audioLevel; }, [audioLevel]);
 
   function stopAll() {
     anims.current.forEach(a => a.stop());
@@ -65,6 +81,7 @@ export function MikaOrb({stage}: Props) {
     a.start();
   }
 
+  // Random roaming — used for idle/thinking/transcribing
   function roamBar(bar: Animated.Value, idx: number, min: number, max: number, speed: number) {
     const next = min + Math.random() * (max - min);
     const dur  = speed * (0.7 + Math.random() * 0.6);
@@ -75,6 +92,7 @@ export function MikaOrb({stage}: Props) {
     anims.current.push(anim);
     anim.start(({finished}) => {
       if (finished) {
+        barScalesRef.current[idx] = next;
         setBlobScales(prev => { const n = [...prev]; n[idx] = next; return n; });
         roamBar(bar, idx, min, max, speed);
       }
@@ -84,6 +102,37 @@ export function MikaOrb({stage}: Props) {
   function startBars(min: number, max: number, speed: number) {
     bars.forEach((bar, i) => {
       const t = setTimeout(() => roamBar(bar, i, min, max, speed), i * (speed / NUM_BARS));
+      barTimers.current.push(t);
+    });
+  }
+
+  // Audio-reactive mode — poll audioLevelRef and push all bars toward it with per-bar noise
+  const audioTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function startAudioReactive(baseMin: number) {
+    // Still do random roaming but at high speed; audioLevel scales the target range
+    bars.forEach((bar, i) => {
+      function tick() {
+        const level = audioLevelRef.current;
+        // Each bar gets a noisy version of the level
+        const noise = 0.85 + Math.random() * 0.3;
+        const target = Math.max(baseMin, Math.min(1.0, level * noise));
+        const dur = 80 + Math.random() * 60;
+        const anim = Animated.timing(bar, {
+          toValue: target, duration: dur,
+          easing: Easing.out(Easing.quad), useNativeDriver: true,
+        });
+        anims.current.push(anim);
+        anim.start(({finished}) => {
+          if (finished) {
+            barScalesRef.current[i] = target;
+            setBlobScales(prev => { const n = [...prev]; n[i] = target; return n; });
+            tick();
+          }
+        });
+      }
+      // Stagger starts so bars don't all move together
+      const t = setTimeout(tick, i * 8);
       barTimers.current.push(t);
     });
   }
@@ -108,15 +157,8 @@ export function MikaOrb({stage}: Props) {
     }
 
     if (stage === 'recording') {
-      startBars(0.3, 1.0, 220);
-      go(Animated.loop(Animated.sequence([
-        Animated.timing(orbScale, {toValue: 1.07, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
-        Animated.timing(orbScale, {toValue: 1.01, duration: 220, easing: Easing.inOut(Easing.quad), useNativeDriver: true}),
-      ])));
-      go(Animated.loop(Animated.sequence([
-        Animated.timing(coreGlow, {toValue: 1.0, duration: 220, useNativeDriver: true}),
-        Animated.timing(coreGlow, {toValue: 0.45, duration: 220, useNativeDriver: true}),
-      ])));
+      // Audio-reactive — bars driven by mic level
+      startAudioReactive(0.2);
       go(Animated.loop(Animated.timing(outerRot, {toValue: 1, duration: 5000, easing: Easing.linear, useNativeDriver: true})));
       go(Animated.loop(Animated.timing(innerRot, {toValue: 1, duration: 3000, easing: Easing.linear, useNativeDriver: true})));
       go(Animated.loop(Animated.timing(ring1, {toValue: 1, duration: 900,  easing: Easing.out(Easing.quad), useNativeDriver: true})));
@@ -138,15 +180,8 @@ export function MikaOrb({stage}: Props) {
     }
 
     if (stage === 'speaking') {
-      startBars(0.22, 0.95, 160);
-      go(Animated.loop(Animated.sequence([
-        Animated.timing(orbScale, {toValue: 1.10, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true}),
-        Animated.timing(orbScale, {toValue: 1.02, duration: 160, easing: Easing.in(Easing.quad),  useNativeDriver: true}),
-      ])));
-      go(Animated.loop(Animated.sequence([
-        Animated.timing(coreGlow, {toValue: 1.0, duration: 160, useNativeDriver: true}),
-        Animated.timing(coreGlow, {toValue: 0.35, duration: 160, useNativeDriver: true}),
-      ])));
+      // Audio-reactive — bars driven by simulated TTS amplitude from HomeScreen
+      startAudioReactive(0.2);
       go(Animated.loop(Animated.timing(outerRot, {toValue: 1, duration: 7000, easing: Easing.linear, useNativeDriver: true})));
       go(Animated.loop(Animated.timing(innerRot, {toValue: 1, duration: 4200, easing: Easing.linear, useNativeDriver: true})));
       go(Animated.loop(Animated.timing(ring1, {toValue: 1, duration: 700,  easing: Easing.out(Easing.quad), useNativeDriver: true})));
@@ -161,13 +196,14 @@ export function MikaOrb({stage}: Props) {
 
   const outerDeg = outerRot.interpolate({inputRange:[0,1], outputRange:['0deg','360deg']});
   const innerDeg = innerRot.interpolate({inputRange:[0,1], outputRange:['360deg','0deg']});
-  const r1s = ring1.interpolate({inputRange:[0,1], outputRange:[1, 2.4]});
-  const r1o = ring1.interpolate({inputRange:[0,0.5,1], outputRange:[0.5,0.15,0]});
-  const r2s = ring2.interpolate({inputRange:[0,1], outputRange:[1, 3.2]});
-  const r2o = ring2.interpolate({inputRange:[0,0.5,1], outputRange:[0.3,0.06,0]});
-  const glowOpacity = coreGlow.interpolate({inputRange:[0,1], outputRange:[0, 0.22]});
 
-  // Blob boundary points — each bar tip defines a point on the boundary
+  // Ripple rings — scale the blob boundary outward
+  const r1s = ring1.interpolate({inputRange:[0,1], outputRange:[1, 2.0]});
+  const r1o = ring1.interpolate({inputRange:[0,0.4,1], outputRange:[0.45,0.12,0]});
+  const r2s = ring2.interpolate({inputRange:[0,1], outputRange:[1, 2.8]});
+  const r2o = ring2.interpolate({inputRange:[0,0.4,1], outputRange:[0.25,0.05,0]});
+
+  // Blob boundary points
   const blobPoints = blobScales.map((s, i) => {
     const angle = (i / NUM_BARS) * 2 * Math.PI - Math.PI / 2;
     const r = BLOB_RADIUS * (0.62 + s * 0.38);
@@ -178,41 +214,47 @@ export function MikaOrb({stage}: Props) {
   });
 
   const blobPath = smoothPath(blobPoints);
+  // Ghost paths for ripple — slightly larger version of the blob
+  const ripplePath1 = scaledBlobPath(blobPoints, 1.18);
+  const ripplePath2 = scaledBlobPath(blobPoints, 1.35);
 
-  // Iris bar positions (same angles, capped inside blob)
   const irisBarRadius = BLOB_RADIUS * 0.72;
 
   return (
     <View style={styles.container}>
-      {/* Ripple rings */}
-      <Animated.View style={[styles.ring, {borderColor: PRIMARY, opacity: r2o, transform:[{scale: r2s}]}]} />
-      <Animated.View style={[styles.ring, {borderColor: PRIMARY, opacity: r1o, transform:[{scale: r1s}]}]} />
-
       {/* Rotating orbit dashes */}
       <Animated.View style={[styles.orbit, {borderColor: PRIMARY, transform:[{rotate: outerDeg}]}]} />
       <Animated.View style={[styles.orbitInner, {borderColor: PRIMARY, transform:[{rotate: innerDeg}]}]} />
 
-      {/* Blob body + internals, scaled together */}
+      {/* Blob-shaped ripple rings — scale from blob boundary outward */}
+      <Animated.View style={[styles.rippleWrap, {opacity: r2o, transform:[{scale: r2s}]}]}>
+        <Svg width={ORB} height={ORB}>
+          <Path d={ripplePath2} fill="none" stroke={PRIMARY} strokeWidth={1} strokeOpacity={1} />
+        </Svg>
+      </Animated.View>
+      <Animated.View style={[styles.rippleWrap, {opacity: r1o, transform:[{scale: r1s}]}]}>
+        <Svg width={ORB} height={ORB}>
+          <Path d={ripplePath1} fill="none" stroke={PRIMARY} strokeWidth={1.2} strokeOpacity={1} />
+        </Svg>
+      </Animated.View>
+
+      {/* Main blob body + internals */}
       <Animated.View style={[styles.orbArea, {transform:[{scale: orbScale}]}]}>
-        {/* SVG blob boundary — fills and outlines the morphing shape */}
         <Svg width={ORB} height={ORB} style={StyleSheet.absoluteFill}>
           <Defs>
             <RadialGradient id="bg" cx="50%" cy="50%" r="50%">
-              <Stop offset="0%" stopColor="#0d0e1c" stopOpacity="1" />
+              <Stop offset="0%"   stopColor="#0d0e1c" stopOpacity="1" />
               <Stop offset="100%" stopColor="#05060e" stopOpacity="1" />
             </RadialGradient>
             <RadialGradient id="glow" cx="50%" cy="50%" r="50%">
-              <Stop offset="0%" stopColor={PRIMARY} stopOpacity="0.35" />
-              <Stop offset="60%" stopColor={PRIMARY} stopOpacity="0.08" />
-              <Stop offset="100%" stopColor={PRIMARY} stopOpacity="0" />
+              <Stop offset="0%"   stopColor={PRIMARY} stopOpacity="0.38" />
+              <Stop offset="55%"  stopColor={PRIMARY} stopOpacity="0.10" />
+              <Stop offset="100%" stopColor={PRIMARY} stopOpacity="0"    />
             </RadialGradient>
           </Defs>
-          {/* Dark fill */}
           <Path d={blobPath} fill="url(#bg)" />
-          {/* Glow fill */}
           <Path d={blobPath} fill="url(#glow)" />
-          {/* Glowing border */}
-          <Path d={blobPath} fill="none" stroke={PRIMARY} strokeWidth={1.5} strokeOpacity={0.7} />
+          <Path d={blobPath} fill="none" stroke={PRIMARY} strokeWidth={1.5} strokeOpacity={0.75} />
         </Svg>
 
         {/* Iris bars */}
@@ -253,12 +295,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  ring: {
-    position: 'absolute',
-    width: ORB, height: ORB,
-    borderRadius: ORB / 2,
-    borderWidth: 1,
-  },
   orbit: {
     position: 'absolute',
     width: ORB + 50, height: ORB + 50,
@@ -274,6 +310,11 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     borderStyle: 'dashed',
     opacity: 0.15,
+  },
+  rippleWrap: {
+    position: 'absolute',
+    width: ORB,
+    height: ORB,
   },
   orbArea: {
     width: ORB,

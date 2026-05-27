@@ -22,10 +22,12 @@ export function HomeScreen() {
   const [liveText, setLiveText] = useState('');
   const [replyText, setReplyText] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
 
   const stageRef = useRef<ProcessingStage>('idle');
   const ttsTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const ttsSimRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bestResultRef = useRef('');
 
   // Text animation values
@@ -75,6 +77,24 @@ export function HomeScreen() {
     ]).start(() => setReplyText(''));
   }
 
+  function stopTtsSim() {
+    if (ttsSimRef.current) { clearInterval(ttsSimRef.current); ttsSimRef.current = null; }
+    setAudioLevel(0);
+  }
+
+  // Simulate TTS amplitude: noisy oscillator that breathes like natural speech
+  function startTtsSim() {
+    stopTtsSim();
+    let phase = 0;
+    ttsSimRef.current = setInterval(() => {
+      phase += 0.18 + Math.random() * 0.12;
+      // Low-freq breath envelope + high-freq noise
+      const breath = 0.45 + 0.35 * Math.sin(phase * 0.7);
+      const noise  = (Math.random() - 0.5) * 0.3;
+      setAudioLevel(Math.max(0.1, Math.min(1.0, breath + noise)));
+    }, 80);
+  }
+
   useEffect(() => {
     Voice.onSpeechResults = e => {
       const text = e.value?.[0] ?? '';
@@ -85,17 +105,40 @@ export function HomeScreen() {
     };
     Voice.onSpeechError = () => {};
 
+    // iOS SFSpeechRecognizer fires volume in range ~0–1
+    Voice.onSpeechVolumeChanged = e => {
+      if (stageRef.current === 'recording') {
+        const raw = e?.value ?? 0;
+        // iOS reports dBFS (negative) — normalize to 0–1
+        const normalized = typeof raw === 'number' && raw < 0
+          ? Math.max(0, (raw + 60) / 60)
+          : Math.max(0, Math.min(1, raw));
+        setAudioLevel(normalized);
+      }
+    };
+
     Tts.getInitStatus()
       .then(() => { Tts.setDucking(true); Tts.setIgnoreSilentSwitch('ignore'); })
       .catch((e: any) => { if (e?.code === 'no_engine') { Tts.requestInstallEngine(); } });
 
-    Tts.addEventListener('tts-finish', () => { clearTimeout(ttsTimeoutRef.current); setStageSync('idle'); hideReply(); });
-    Tts.addEventListener('tts-cancel', () => { clearTimeout(ttsTimeoutRef.current); setStageSync('idle'); hideReply(); });
+    Tts.addEventListener('tts-finish', () => {
+      clearTimeout(ttsTimeoutRef.current);
+      stopTtsSim();
+      setStageSync('idle');
+      hideReply();
+    });
+    Tts.addEventListener('tts-cancel', () => {
+      clearTimeout(ttsTimeoutRef.current);
+      stopTtsSim();
+      setStageSync('idle');
+      hideReply();
+    });
 
     return () => {
       Voice.destroy().catch(() => {});
       clearTimeout(ttsTimeoutRef.current);
       clearTimeout(flushTimeoutRef.current);
+      stopTtsSim();
       Tts.removeAllListeners('tts-finish');
       Tts.removeAllListeners('tts-cancel');
     };
@@ -109,6 +152,7 @@ export function HomeScreen() {
       const reply = await chat(text);
       showReply(reply);
       setStageSync('speaking');
+      startTtsSim();
       Tts.speak(reply);
       const ms = Math.max(4000, reply.split(' ').length * 400);
       ttsTimeoutRef.current = setTimeout(() => {
@@ -125,6 +169,7 @@ export function HomeScreen() {
       await Voice.destroy();
       bestResultRef.current = '';
       setLiveText('');
+      setAudioLevel(0);
       hideReply();
       setStageSync('recording');
       await Voice.start('en-US');
@@ -133,6 +178,7 @@ export function HomeScreen() {
 
   const stopRecordingAndProcess = useCallback(async () => {
     if (stageRef.current !== 'recording') { return; }
+    setAudioLevel(0);
     setStageSync('transcribing');
     try { await Voice.stop(); } catch (_) {}
     flushTimeoutRef.current = setTimeout(() => {
@@ -163,7 +209,7 @@ export function HomeScreen() {
 
       {/* Orb — takes upper portion */}
       <View style={styles.orbArea}>
-        <MikaOrb stage={stage} />
+        <MikaOrb stage={stage} audioLevel={audioLevel} />
       </View>
 
       {/* Text zone — between orb and button */}
