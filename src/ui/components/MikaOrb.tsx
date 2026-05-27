@@ -1,35 +1,56 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {Animated, Easing, StyleSheet, View} from 'react-native';
+import Svg, {Path, Defs, RadialGradient, Stop} from 'react-native-svg';
 import {ProcessingStage} from '../../types';
 
-const ORB = 190;
-const NUM_BARS = 16;
-const BLOB_RADIUS = ORB * 0.38;
+const ORB = 200;
+const NUM_BARS = 24;
+// Blob radius controls how far bar tips reach (and thus blob boundary)
+const BLOB_RADIUS = ORB * 0.46;
+const CENTER = ORB / 2;
 
 interface Props {
   stage: ProcessingStage;
 }
 
-// Smooth never-restarting loop: animates between random values continuously
-function smoothRoam(val: Animated.Value, min: number, max: number, speed: number): Animated.CompositeAnimation {
-  const next = min + Math.random() * (max - min);
-  return Animated.sequence([
-    Animated.timing(val, {toValue: next, duration: speed + Math.random() * speed * 0.4, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
-  ]);
+// Build a smooth closed SVG path through points using catmull-rom → cubic bezier
+function smoothPath(pts: {x: number; y: number}[]): string {
+  const n = pts.length;
+  const cp = pts.map((_, i) => {
+    const p0 = pts[(i - 1 + n) % n];
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % n];
+    const p3 = pts[(i + 2) % n];
+    // Catmull-rom control points with tension 0.4
+    const t = 0.4;
+    return {
+      cp1x: p1.x + (p2.x - p0.x) * t / 2,
+      cp1y: p1.y + (p2.y - p0.y) * t / 2,
+      cp2x: p2.x - (p3.x - p1.x) * t / 2,
+      cp2y: p2.y - (p3.y - p1.y) * t / 2,
+    };
+  });
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < n; i++) {
+    const next = pts[(i + 1) % n];
+    const c = cp[i];
+    d += ` C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${next.x} ${next.y}`;
+  }
+  d += ' Z';
+  return d;
 }
 
 export function MikaOrb({stage}: Props) {
-  const bars       = useRef(Array.from({length: NUM_BARS}, () => new Animated.Value(0.35))).current;
-  const outerRot   = useRef(new Animated.Value(0)).current;
-  const innerRot   = useRef(new Animated.Value(0)).current;
-  const orbScale   = useRef(new Animated.Value(1)).current;
-  const coreGlow   = useRef(new Animated.Value(0.5)).current;
-  const ring1      = useRef(new Animated.Value(0)).current;
-  const ring2      = useRef(new Animated.Value(0)).current;
-  const anims      = useRef<Animated.CompositeAnimation[]>([]);
-  const barTimers  = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const bars      = useRef(Array.from({length: NUM_BARS}, () => new Animated.Value(0.35))).current;
+  const outerRot  = useRef(new Animated.Value(0)).current;
+  const innerRot  = useRef(new Animated.Value(0)).current;
+  const orbScale  = useRef(new Animated.Value(1)).current;
+  const coreGlow  = useRef(new Animated.Value(0.5)).current;
+  const ring1     = useRef(new Animated.Value(0)).current;
+  const ring2     = useRef(new Animated.Value(0)).current;
+  const anims     = useRef<Animated.CompositeAnimation[]>([]);
+  const barTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  // Blob shape state — driven by bar values, non-native so we track in JS
   const [blobScales, setBlobScales] = useState<number[]>(Array(NUM_BARS).fill(0.35));
 
   function stopAll() {
@@ -44,25 +65,17 @@ export function MikaOrb({stage}: Props) {
     a.start();
   }
 
-  // Roaming animation per bar — never resets, just keeps finding new targets
   function roamBar(bar: Animated.Value, idx: number, min: number, max: number, speed: number) {
     const next = min + Math.random() * (max - min);
     const dur  = speed * (0.7 + Math.random() * 0.6);
     const anim = Animated.timing(bar, {
-      toValue: next,
-      duration: dur,
-      easing: Easing.inOut(Easing.sin),
-      useNativeDriver: true,
+      toValue: next, duration: dur,
+      easing: Easing.inOut(Easing.sin), useNativeDriver: true,
     });
     anims.current.push(anim);
     anim.start(({finished}) => {
       if (finished) {
-        // Update blob state from bar value
-        setBlobScales(prev => {
-          const next2 = [...prev];
-          next2[idx] = next;
-          return next2;
-        });
+        setBlobScales(prev => { const n = [...prev]; n[idx] = next; return n; });
         roamBar(bar, idx, min, max, speed);
       }
     });
@@ -70,7 +83,6 @@ export function MikaOrb({stage}: Props) {
 
   function startBars(min: number, max: number, speed: number) {
     bars.forEach((bar, i) => {
-      // Stagger start so they don't all move together
       const t = setTimeout(() => roamBar(bar, i, min, max, speed), i * (speed / NUM_BARS));
       barTimers.current.push(t);
     });
@@ -82,7 +94,7 @@ export function MikaOrb({stage}: Props) {
     ring2.setValue(0);
 
     if (stage === 'idle') {
-      startBars(0.18, 0.6, 1600);
+      startBars(0.18, 0.6, 1800);
       go(Animated.loop(Animated.sequence([
         Animated.timing(orbScale, {toValue: 1.025, duration: 3500, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
         Animated.timing(orbScale, {toValue: 0.975, duration: 3500, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
@@ -149,20 +161,26 @@ export function MikaOrb({stage}: Props) {
 
   const outerDeg = outerRot.interpolate({inputRange:[0,1], outputRange:['0deg','360deg']});
   const innerDeg = innerRot.interpolate({inputRange:[0,1], outputRange:['360deg','0deg']});
-  const r1s = ring1.interpolate({inputRange:[0,1], outputRange:[1,2.4]});
+  const r1s = ring1.interpolate({inputRange:[0,1], outputRange:[1, 2.4]});
   const r1o = ring1.interpolate({inputRange:[0,0.5,1], outputRange:[0.5,0.15,0]});
-  const r2s = ring2.interpolate({inputRange:[0,1], outputRange:[1,3.2]});
+  const r2s = ring2.interpolate({inputRange:[0,1], outputRange:[1, 3.2]});
   const r2o = ring2.interpolate({inputRange:[0,0.5,1], outputRange:[0.3,0.06,0]});
+  const glowOpacity = coreGlow.interpolate({inputRange:[0,1], outputRange:[0, 0.22]});
 
-  // Build blob polygon path from bar scales
+  // Blob boundary points — each bar tip defines a point on the boundary
   const blobPoints = blobScales.map((s, i) => {
     const angle = (i / NUM_BARS) * 2 * Math.PI - Math.PI / 2;
-    const r = BLOB_RADIUS * (0.55 + s * 0.45);
+    const r = BLOB_RADIUS * (0.62 + s * 0.38);
     return {
-      x: Math.cos(angle) * r,
-      y: Math.sin(angle) * r,
+      x: CENTER + Math.cos(angle) * r,
+      y: CENTER + Math.sin(angle) * r,
     };
   });
+
+  const blobPath = smoothPath(blobPoints);
+
+  // Iris bar positions (same angles, capped inside blob)
+  const irisBarRadius = BLOB_RADIUS * 0.72;
 
   return (
     <View style={styles.container}>
@@ -174,47 +192,35 @@ export function MikaOrb({stage}: Props) {
       <Animated.View style={[styles.orbit, {borderColor: PRIMARY, transform:[{rotate: outerDeg}]}]} />
       <Animated.View style={[styles.orbitInner, {borderColor: PRIMARY, transform:[{rotate: innerDeg}]}]} />
 
-      {/* Orb shell */}
-      <Animated.View style={[styles.orb, {shadowColor: PRIMARY, transform:[{scale: orbScale}]}]}>
+      {/* Blob body + internals, scaled together */}
+      <Animated.View style={[styles.orbArea, {transform:[{scale: orbScale}]}]}>
+        {/* SVG blob boundary — fills and outlines the morphing shape */}
+        <Svg width={ORB} height={ORB} style={StyleSheet.absoluteFill}>
+          <Defs>
+            <RadialGradient id="bg" cx="50%" cy="50%" r="50%">
+              <Stop offset="0%" stopColor="#0d0e1c" stopOpacity="1" />
+              <Stop offset="100%" stopColor="#05060e" stopOpacity="1" />
+            </RadialGradient>
+            <RadialGradient id="glow" cx="50%" cy="50%" r="50%">
+              <Stop offset="0%" stopColor={PRIMARY} stopOpacity="0.35" />
+              <Stop offset="60%" stopColor={PRIMARY} stopOpacity="0.08" />
+              <Stop offset="100%" stopColor={PRIMARY} stopOpacity="0" />
+            </RadialGradient>
+          </Defs>
+          {/* Dark fill */}
+          <Path d={blobPath} fill="url(#bg)" />
+          {/* Glow fill */}
+          <Path d={blobPath} fill="url(#glow)" />
+          {/* Glowing border */}
+          <Path d={blobPath} fill="none" stroke={PRIMARY} strokeWidth={1.5} strokeOpacity={0.7} />
+        </Svg>
 
-        {/* Ambient glow */}
-        <Animated.View style={[styles.ambientGlow, {backgroundColor: PRIMARY, opacity: coreGlow.interpolate({inputRange:[0,1],outputRange:[0,0.2]})}]} />
-
-        {/* Blob — amorphous shape driven by bar scales */}
-        <View style={styles.blobContainer} pointerEvents="none">
-          {blobPoints.map((pt, i) => {
-            const next = blobPoints[(i + 1) % NUM_BARS];
-            const cx = (pt.x + next.x) / 2 + ORB / 2;
-            const cy = (pt.y + next.y) / 2 + ORB / 2;
-            const dx = next.x - pt.x;
-            const dy = next.y - pt.y;
-            const len = Math.sqrt(dx * dx + dy * dy);
-            const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-            return (
-              <View
-                key={i}
-                style={[
-                  styles.blobSegment,
-                  {
-                    width: len + 6,
-                    backgroundColor: PRIMARY,
-                    left: cx - (len + 6) / 2,
-                    top: cy - 3,
-                    transform: [{rotate: `${angle}deg`}],
-                    opacity: 0.55,
-                  },
-                ]}
-              />
-            );
-          })}
-        </View>
-
-        {/* Radial bars — iris effect */}
-        <View style={styles.irisContainer}>
+        {/* Iris bars */}
+        <View style={styles.irisContainer} pointerEvents="none">
           {bars.map((barAnim, i) => {
             const angle = (i / NUM_BARS) * 2 * Math.PI;
-            const x = Math.cos(angle) * BLOB_RADIUS;
-            const y = Math.sin(angle) * BLOB_RADIUS;
+            const x = Math.cos(angle) * irisBarRadius;
+            const y = Math.sin(angle) * irisBarRadius;
             return (
               <Animated.View
                 key={i}
@@ -269,34 +275,11 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     opacity: 0.15,
   },
-  orb: {
-    width: ORB, height: ORB,
-    borderRadius: ORB / 2,
-    backgroundColor: '#05060e',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    shadowOffset: {width: 0, height: 0},
-    shadowOpacity: 1,
-    shadowRadius: 40,
-    elevation: 24,
-  },
-  ambientGlow: {
-    position: 'absolute',
-    width: ORB, height: ORB,
-    borderRadius: ORB / 2,
-  },
-  blobContainer: {
-    position: 'absolute',
+  orbArea: {
     width: ORB,
     height: ORB,
-  },
-  blobSegment: {
-    position: 'absolute',
-    height: 6,
-    borderRadius: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   irisContainer: {
     position: 'absolute',
@@ -306,21 +289,21 @@ const styles = StyleSheet.create({
   },
   bar: {
     position: 'absolute',
-    width: 2.5,
-    height: 24,
+    width: 2,
+    height: 22,
     borderRadius: 2,
-    opacity: 0.9,
+    opacity: 0.85,
     shadowOffset: {width: 0, height: 0},
     shadowOpacity: 1,
-    shadowRadius: 5,
+    shadowRadius: 4,
     elevation: 4,
   },
   pupil: {
-    width: 16, height: 16,
-    borderRadius: 8,
+    width: 14, height: 14,
+    borderRadius: 7,
     shadowOffset: {width: 0, height: 0},
     shadowOpacity: 1,
-    shadowRadius: 16,
+    shadowRadius: 14,
     elevation: 10,
   },
 });
